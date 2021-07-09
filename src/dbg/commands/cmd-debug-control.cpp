@@ -19,17 +19,18 @@
 
 static bool skipInt3Stepping(int argc, char* argv[])
 {
-    if(!bSkipInt3Stepping || dbgisrunning())
+    if(!bSkipInt3Stepping || dbgisrunning() || getLastExceptionInfo().ExceptionRecord.ExceptionCode != EXCEPTION_BREAKPOINT)
         return false;
-    duint cip = GetContextDataEx(hActiveThread, UE_CIP);
-    unsigned char ch;
-    MemRead(cip, &ch, sizeof(ch));
-    if(ch == 0xCC && getLastExceptionInfo().ExceptionRecord.ExceptionCode == EXCEPTION_BREAKPOINT)
+    auto exceptionAddress = (duint)getLastExceptionInfo().ExceptionRecord.ExceptionAddress;
+    unsigned char data[MAX_DISASM_BUFFER];
+    MemRead(exceptionAddress, data, sizeof(data));
+    Zydis zydis;
+    if(zydis.Disassemble(exceptionAddress, data) && zydis.IsInt3())
     {
         //Don't allow skipping of multiple consecutive INT3 instructions
         getLastExceptionInfo().ExceptionRecord.ExceptionCode = 0;
         dputs(QT_TRANSLATE_NOOP("DBG", "Skipped INT3!"));
-        cbDebugSkip(1, argv);
+        cbDebugContinue(1, argv);
         return true;
     }
     return false;
@@ -42,7 +43,6 @@ bool cbDebugRunInternal(int argc, char* argv[])
     // Don't "run" twice if the program is already running
     if(dbgisrunning())
         return false;
-    dbgsetispausedbyuser(false);
     GuiSetDebugStateAsync(running);
     unlock(WAITID_RUN);
     PLUG_CB_RESUMEDEBUG callbackInfo;
@@ -133,14 +133,11 @@ bool cbDebugInit(int argc, char* argv[])
         strcpy_s(currentfolder, arg3);
 
     static INIT_STRUCT init;
-    memset(&init, 0, sizeof(INIT_STRUCT));
     init.exe = arg1;
     init.commandline = commandline;
     if(*currentfolder)
         init.currentfolder = currentfolder;
-
-    hDebugLoopThread = CreateThread(nullptr, 0, threadDebugLoop, &init, CREATE_SUSPENDED, nullptr);
-    ResumeThread(hDebugLoopThread);
+    dbgcreatedebugthread(&init);
     return true;
 }
 
@@ -160,6 +157,7 @@ bool cbDebugStop(int argc, char* argv[])
     //history
     HistoryClear();
     DWORD BeginTick = GetTickCount();
+    bool shownWarning = false;
 
     while(true)
     {
@@ -173,15 +171,24 @@ bool cbDebugStop(int argc, char* argv[])
         {
             unlock(WAITID_RUN);
             DWORD CurrentTick = GetTickCount();
-            if(CurrentTick - BeginTick > 10000)
+            DWORD TimeElapsed = CurrentTick - BeginTick;
+            if(TimeElapsed >= 10000)
             {
-                dputs(QT_TRANSLATE_NOOP("DBG", "The debuggee does not stop after 10 seconds. The debugger state may be corrupted."));
-                DbSave(DbLoadSaveType::All);
-                TerminateThread(hDebugLoopThreadCopy, 1); // TODO: this will lose state and cause possible corruption if a critical section is still owned
-                CloseHandle(hDebugLoopThreadCopy);
-                return false;
+                if(!shownWarning)
+                {
+                    shownWarning = true;
+                    dputs(QT_TRANSLATE_NOOP("DBG", "Finalizing the debugger thread took more than 10 seconds. This can happen if you are loading large symbol files or saving a large database."));
+                }
+                if(IsFileBeingDebugged() || TimeElapsed >= 100000)
+                {
+                    dputs(QT_TRANSLATE_NOOP("DBG", "The debuggee did not stop after 10 seconds of requesting termination. The debugger state may be corrupted. It is recommended to restart x64dbg."));
+                    DbSave(DbLoadSaveType::All);
+                    TerminateThread(hDebugLoopThreadCopy, 1); // TODO: this will lose state and cause possible corruption if a critical section is still owned
+                    CloseHandle(hDebugLoopThreadCopy);
+                    return false;
+                }
             }
-            if(CurrentTick - BeginTick >= 300)
+            if(TimeElapsed >= 300)
                 TerminateProcess(fdProcessInfo->hProcess, -1);
         }
         break;
@@ -227,7 +234,7 @@ bool cbDebugAttach(int argc, char* argv[])
 #endif // _WIN64
         return false;
     }
-    if(!GetFileNameFromProcessHandle(hProcess, szFileName))
+    if(!GetFileNameFromProcessHandle(hProcess, szDebuggeePath))
     {
         dprintf(QT_TRANSLATE_NOOP("DBG", "Could not get module filename %X!\n"), DWORD(pid));
         return false;
@@ -248,17 +255,39 @@ bool cbDebugAttach(int argc, char* argv[])
         if(tid)
             dbgsetresumetid(tid);
     }
-    hDebugLoopThread = CreateThread(nullptr, 0, threadAttachLoop, (void*)pid, CREATE_SUSPENDED, nullptr);
-    ResumeThread(hDebugLoopThread);
+    static INIT_STRUCT init;
+    init.attach = true;
+    init.pid = (DWORD)pid;
+    dbgcreatedebugthread(&init);
+    return true;
+}
+
+static bool dbgdetachDisableAllBreakpoints(const BREAKPOINT* bp)
+{
+    if(bp->enabled)
+    {
+        if(bp->type == BPNORMAL)
+            DeleteBPX(bp->addr);
+        else if(bp->type == BPMEMORY)
+            RemoveMemoryBPX(bp->addr, 0);
+        else if(bp->type == BPHARDWARE && TITANDRXVALID(bp->titantype))
+            DeleteHardwareBreakPoint(TITANGETDRX(bp->titantype));
+    }
     return true;
 }
 
 bool cbDebugDetach(int argc, char* argv[])
 {
-    unlock(WAITID_RUN); //run
-    dbgsetisdetachedbyuser(true); //detach when paused
-    StepInto((void*)cbDetach);
-    DebugBreakProcess(fdProcessInfo->hProcess);
+    PLUG_CB_DETACH detachInfo;
+    detachInfo.fdProcessInfo = fdProcessInfo;
+    plugincbcall(CB_DETACH, &detachInfo);
+    BpEnumAll(dbgdetachDisableAllBreakpoints); // Disable all software breakpoints before detaching.
+    if(!DetachDebuggerEx(fdProcessInfo->dwProcessId))
+        dputs(QT_TRANSLATE_NOOP("DBG", "DetachDebuggerEx failed..."));
+    else
+        dputs(QT_TRANSLATE_NOOP("DBG", "Detached!"));
+    _dbg_animatestop(); // Stop animating
+    unlock(WAITID_RUN); // run to resume the debug loop if necessary
     return true;
 }
 
@@ -310,9 +339,14 @@ bool cbDebugPause(int argc, char* argv[])
         dputs(QT_TRANSLATE_NOOP("DBG", "Program is not running"));
         return false;
     }
-    if(SuspendThread(hActiveThread) == -1)
+    // Interesting behavior found by JustMagic, if the active thread is suspended pause would fail
+    auto previousSuspendCount = SuspendThread(hActiveThread);
+    if(previousSuspendCount != 0)
     {
-        dputs(QT_TRANSLATE_NOOP("DBG", "Error suspending thread"));
+        if(previousSuspendCount != -1)
+            ResumeThread(hActiveThread);
+        dputs(QT_TRANSLATE_NOOP("DBG", "The active thread is suspended, switch to a running thread to pause the process"));
+        // TODO: perhaps inject an INT3 in the process as an alternative to failing?
         return false;
     }
     duint CIP = GetContextDataEx(hActiveThread, UE_CIP);
@@ -390,7 +424,7 @@ bool cbDebugStepOver(int argc, char* argv[])
         return true;
     if(skipInt3Stepping(1, argv) && !--steprepeat)
         return true;
-    StepOver((void*)cbStep);
+    StepOverWrapper((void*)cbStep);
     // History
     HistoryClear();
     dbgsetsteprepeat(false, steprepeat);
@@ -418,7 +452,7 @@ bool cbDebugStepOut(int argc, char* argv[])
         return true;
     HistoryClear();
     mRtrPreviousCSP = GetContextDataEx(hActiveThread, UE_CSP);
-    StepOver((void*)cbRtrStep);
+    StepOverWrapper((void*)cbRtrStep);
     dbgsetsteprepeat(false, steprepeat);
     return cbDebugRunInternal(1, argv);
 }

@@ -11,6 +11,7 @@
 #include "value.h"
 #include "TraceRecord.h"
 #include "exhandlerinfo.h"
+#include <vector>
 
 namespace Exprfunc
 {
@@ -37,12 +38,22 @@ namespace Exprfunc
 
     duint modsystem(duint addr)
     {
-        return ModGetParty(addr) == 1;
+        SHARED_ACQUIRE(LockModules);
+        auto info = ModInfoFromAddr(addr);
+        if(info)
+            return info->party == mod_system;
+        else
+            return 0;
     }
 
     duint moduser(duint addr)
     {
-        return ModGetParty(addr) == 0;
+        SHARED_ACQUIRE(LockModules);
+        auto info = ModInfoFromAddr(addr);
+        if(info)
+            return info->party == mod_user;
+        else
+            return 0;
     }
 
     duint modrva(duint addr)
@@ -61,7 +72,19 @@ namespace Exprfunc
             return 0;
     }
 
-    static duint selstart(int hWindow)
+    duint modisexport(duint addr)
+    {
+        SHARED_ACQUIRE(LockModules);
+        auto info = ModInfoFromAddr(addr);
+        if(info)
+        {
+            duint rva = addr - info->base;
+            return info->findExport(rva) ? 1 : 0;
+        }
+        return 0;
+    }
+
+    static duint selstart(GUISELECTIONTYPE hWindow)
     {
         SELECTIONDATA selection;
         GuiSelectionGet(hWindow, &selection);
@@ -96,6 +119,11 @@ namespace Exprfunc
     duint tid()
     {
         return duint(ThreadGetId(hActiveThread));
+    }
+
+    duint kusd()
+    {
+        return duint(SharedUserData);
     }
 
     duint bswap(duint value)
@@ -159,7 +187,7 @@ namespace Exprfunc
         BASIC_INSTRUCTION_INFO info;
         if(!disasmfast(addr, &info, true))
             return 0;
-        return info.branch && !info.call && !strstr(info.instruction, "jmp");
+        return info.branch && !info.call && !::strstr(info.instruction, "jmp");
     }
 
     duint disisbranch(duint addr)
@@ -175,7 +203,7 @@ namespace Exprfunc
         BASIC_INSTRUCTION_INFO info;
         if(!disasmfast(addr, &info, true))
             return 0;
-        return strstr(info.instruction, "ret") != nullptr;
+        return ::strstr(info.instruction, "ret") != nullptr;
     }
 
     duint disiscall(duint addr)
@@ -249,7 +277,7 @@ namespace Exprfunc
         BASIC_INSTRUCTION_INFO info;
         if(!disasmfast(addr, &info, true))
             return 0;
-        return info.branch && !strstr(info.instruction, "jmp") ? addr + info.size : 0;
+        return info.branch && !::strstr(info.instruction, "jmp") ? addr + info.size : 0;
     }
 
     duint disnext(duint addr)
@@ -270,6 +298,12 @@ namespace Exprfunc
         unsigned char disasmData[256];
         MemRead(readStart, disasmData, sizeof(disasmData));
         return readStart + disasmback(disasmData, 0, sizeof(disasmData), addr - readStart, 1);
+    }
+
+    duint disiscallsystem(duint addr)
+    {
+        duint dest = disbranchdest(addr);
+        return dest && (modsystem(dest) || modsystem(disbranchdest(dest)));
     }
 
     duint trenabled(duint addr)
@@ -410,5 +444,145 @@ namespace Exprfunc
         //This is a function to sets CIP without calling DebugUpdateGui. This is a workaround for "bpgoto".
         SetContextDataEx(hActiveThread, UE_CIP, cip);
         return cip;
+    }
+
+    duint exfirstchance()
+    {
+        return getLastExceptionInfo().dwFirstChance;
+    }
+
+    duint exaddr()
+    {
+        return (duint)getLastExceptionInfo().ExceptionRecord.ExceptionAddress;
+    }
+
+    duint excode()
+    {
+        return getLastExceptionInfo().ExceptionRecord.ExceptionCode;
+    }
+
+    duint exflags()
+    {
+        return getLastExceptionInfo().ExceptionRecord.ExceptionFlags;
+    }
+
+    duint exinfocount()
+    {
+        return getLastExceptionInfo().ExceptionRecord.NumberParameters;
+    }
+
+    duint exinfo(duint index)
+    {
+        if(index >= EXCEPTION_MAXIMUM_PARAMETERS)
+            return 0;
+        return getLastExceptionInfo().ExceptionRecord.ExceptionInformation[index];
+    }
+
+    bool utf16(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        if(argc > 1 || !argc)
+            return false;
+
+        assert(argv[0].type == ValueTypeNumber);
+        duint addr = argv[0].number;
+
+        std::vector<wchar_t> tempStr(MAX_STRING_SIZE + 1);
+        duint NumberOfBytesRead = 0;
+        if(!MemRead(addr, tempStr.data(), sizeof(wchar_t) * (tempStr.size() - 1), &NumberOfBytesRead) && NumberOfBytesRead == 0)
+        {
+            return false;
+        }
+
+        auto utf8Str = StringUtils::Utf16ToUtf8(tempStr.data());
+        if(utf8Str.empty() && wcslen(tempStr.data()) > 0)
+        {
+            return false;
+        }
+
+        auto strBuf = BridgeAlloc(utf8Str.size() + 1);
+        memcpy(strBuf, utf8Str.c_str(), utf8Str.size());
+
+        result->type = ValueTypeString;
+        result->string.ptr = (const char*)strBuf;
+        result->string.isOwner = true;
+
+        return true;
+    }
+
+    bool utf8(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        if(argc > 1 || !argc)
+            return false;
+
+        assert(argv[0].type == ValueTypeNumber);
+        duint addr = argv[0].number;
+
+        std::vector<char> tempStr(MAX_STRING_SIZE + 1);
+        duint NumberOfBytesRead = 0;
+        if(!MemRead(addr, tempStr.data(), tempStr.size() - 1, &NumberOfBytesRead) && NumberOfBytesRead == 0)
+        {
+            return false;
+        }
+
+        auto strlen = ::strlen(tempStr.data());
+        auto strBuf = BridgeAlloc(strlen + 1);
+        memcpy(strBuf, tempStr.data(), strlen + 1);
+
+        result->type = ValueTypeString;
+        result->string.ptr = (const char*)strBuf;
+        result->string.isOwner = true;
+
+        return true;
+
+    }
+
+    bool modbasefromname(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        result->type = ValueTypeNumber;
+        result->number = ModBaseFromName(argv[0].string.ptr);
+
+        if(!result->number)
+            return false;
+
+        return true;
+    }
+
+    bool strcmp(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argv[0].type == ValueTypeString);
+        result->type = ValueTypeNumber;
+        result->number = 0;
+
+        if(argc > 2 || argc <= 1)
+            return false;
+
+        result->number = !::strcmp(argv[0].string.ptr, argv[1].string.ptr);
+        return true;
+    }
+
+    bool strstr(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argv[0].type == ValueTypeString);
+        result->type = ValueTypeNumber;
+        result->number = 0;
+
+        if(argc > 2 || argc <= 1)
+            return false;
+
+        result->number = ::strstr(argv[0].string.ptr, argv[1].string.ptr) != nullptr;
+        return true;
+    }
+
+    bool strlen(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argv[0].type == ValueTypeString);
+        result->type = ValueTypeNumber;
+        result->number = 0;
+
+        if(argc != 1)
+            return false;
+
+        result->number = ::strlen(argv[0].string.ptr);
+        return true;
     }
 }

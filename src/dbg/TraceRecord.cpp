@@ -13,7 +13,7 @@
 
 TraceRecordManager TraceRecord;
 
-TraceRecordManager::TraceRecordManager() : instructionCounter(0)
+TraceRecordManager::TraceRecordManager()
 {
     ModuleNames.emplace_back("");
 }
@@ -202,7 +202,7 @@ void TraceRecordManager::TraceExecute(duint address, duint size)
 //See https://www.felixcloutier.com/x86/FXSAVE.html, max 512 bytes
 #define memoryContentSize 512
 
-static void HandleCapstoneOperand(const Zydis & cp, int opindex, DISASM_ARGTYPE* argType, duint* value, unsigned char memoryContent[memoryContentSize], unsigned char* memorySize)
+static void HandleZydisOperand(const Zydis & cp, int opindex, DISASM_ARGTYPE* argType, duint* value, unsigned char memoryContent[memoryContentSize], unsigned char* memorySize)
 {
     *value = cp.ResolveOpValue(opindex, [&cp](ZydisRegister reg)
     {
@@ -265,6 +265,8 @@ void TraceRecordManager::TraceExecuteRecord(const Zydis & newInstruction)
     // Don't try to resolve memory values for invalid/lea/nop instructions
     if(newInstruction.Success() && !newInstruction.IsNop() && newInstruction.GetId() != ZYDIS_MNEMONIC_LEA)
     {
+        // This can happen when trace execute instruction is used, we need to fix that or something would go wrong with the GUI.
+        newContext.registers.regcontext.cip = newInstruction.Address();
         DISASM_ARGTYPE argType;
         duint value;
         unsigned char memoryContent[memoryContentSize];
@@ -272,7 +274,7 @@ void TraceRecordManager::TraceExecuteRecord(const Zydis & newInstruction)
         for(int i = 0; i < newInstruction.OpCount(); i++)
         {
             memset(memoryContent, 0, sizeof(memoryContent));
-            HandleCapstoneOperand(newInstruction, i, &argType, &value, memoryContent, &memorySize);
+            HandleZydisOperand(newInstruction, i, &argType, &value, memoryContent, &memorySize);
             // check for overflow of the memory buffer
             if(newMemoryArrayCount * sizeof(duint) + memorySize > memoryArrayCount * sizeof(duint))
                 continue;
@@ -486,12 +488,12 @@ void TraceRecordManager::increaseInstructionCounter()
 
 bool TraceRecordManager::enableRunTrace(bool enabled, const char* fileName)
 {
-    if(!DbgIsDebugging())
-        return false;
     if(enabled)
     {
         if(rtEnabled)
             enableRunTrace(false, NULL); //re-enable run trace
+        if(!DbgIsDebugging())
+            return false;
         rtFile = CreateFileW(StringUtils::Utf8ToUtf16(fileName).c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if(rtFile != INVALID_HANDLE_VALUE)
         {
