@@ -12,6 +12,7 @@
 #include "value.h"
 #include "symbolinfo.h"
 #include "argument.h"
+#include "expressionparser.h"
 
 bool cbBadCmd(int argc, char* argv[])
 {
@@ -19,79 +20,92 @@ bool cbBadCmd(int argc, char* argv[])
     int valsize = 0;
     bool isvar = false;
     bool hexonly = false;
-    if(valfromstring(*argv, &value, false, false, &valsize, &isvar, &hexonly, true)) //dump variable/value/register/etc
+    bool silent = false;
+    bool baseonly = false;
+    bool allowassign = true;
+    ExpressionParser parser(argv[0]);
+    ExpressionParser::EvalValue evalue(0);
+    if(parser.Calculate(evalue, valuesignedcalc(), allowassign, silent, baseonly, &valsize, &isvar, &hexonly))
     {
-        varset("$ans", value, true);
-        if(valsize)
-            valsize *= 2;
-        else
-            valsize = 1;
-        char format_str[deflen] = "";
-        auto symbolic = SymGetSymbolicName(value);
-        if(symbolic.length())
-            symbolic = " " + symbolic;
-        if(isvar) // and *cmd!='.' and *cmd!='x') //prevent stupid 0=0 stuff
+        if(evalue.isString)
         {
-            if(value > 9 && !hexonly)
+            varset("$ans", evalue.data.c_str(), true);
+            dprintf_untranslated("\"%s\"\n", StringUtils::Escape(evalue.data).c_str());
+        }
+        else if(evalue.DoEvaluate(value, silent, baseonly, &valsize, &isvar, &hexonly))
+        {
+            varset("$ans", value, true);
+            if(valsize)
+                valsize *= 2;
+            else
+                valsize = 1;
+            char format_str[deflen] = "";
+            auto symbolic = SymGetSymbolicName(value, false);
+            if(symbolic.length())
+                symbolic = " " + symbolic;
+            if(isvar)  // and *cmd!='.' and *cmd!='x') //prevent stupid 0=0 stuff
             {
-                if(!valuesignedcalc()) //signed numbers
+                if(value > 9 && !hexonly)
+                {
+                    if(!valuesignedcalc())  //signed numbers
 #ifdef _WIN64
-                    sprintf_s(format_str, "%%s=%%.%dllX (%%llud)%%s\n", valsize); // TODO: This and the following statements use "%llX" for a "int"-typed variable. Maybe we can use "%X" everywhere?
+                        sprintf_s(format_str, "%%s=%%.%dllX (%%llud)%%s\n", valsize); // TODO: This and the following statements use "%llX" for a "int"-typed variable. Maybe we can use "%X" everywhere?
 #else //x86
-                    sprintf_s(format_str, "%%s=%%.%dX (%%ud)%%s\n", valsize);
+                        sprintf_s(format_str, "%%s=%%.%dX (%%ud)%%s\n", valsize);
 #endif //_WIN64
+                    else
+#ifdef _WIN64
+                        sprintf_s(format_str, "%%s=%%.%dllX (%%lld)%%s\n", valsize);
+#else //x86
+                        sprintf_s(format_str, "%%s=%%.%dX (%%d)%%s\n", valsize);
+#endif //_WIN64
+                    dprintf_untranslated(format_str, *argv, value, value, symbolic.c_str());
+                }
                 else
-#ifdef _WIN64
-                    sprintf_s(format_str, "%%s=%%.%dllX (%%lld)%%s\n", valsize);
-#else //x86
-                    sprintf_s(format_str, "%%s=%%.%dX (%%d)%%s\n", valsize);
-#endif //_WIN64
-                dprintf_untranslated(format_str, *argv, value, value, symbolic.c_str());
+                {
+                    sprintf_s(format_str, "%%s=%%.%dX%%s\n", valsize);
+                    dprintf_untranslated(format_str, *argv, value, symbolic.c_str());
+                }
             }
             else
             {
-                sprintf_s(format_str, "%%s=%%.%dX%%s\n", valsize);
-                dprintf_untranslated(format_str, *argv, value, symbolic.c_str());
-            }
-        }
-        else
-        {
-            if(value > 9 && !hexonly)
-            {
-                if(!valuesignedcalc()) //signed numbers
+                if(value > 9 && !hexonly)
+                {
+                    if(!valuesignedcalc())  //signed numbers
 #ifdef _WIN64
-                    sprintf_s(format_str, "%%s=%%.%dllX (%%llud)%%s\n", valsize);
+                        sprintf_s(format_str, "%%s=%%.%dllX (%%llud)%%s\n", valsize);
 #else //x86
-                    sprintf_s(format_str, "%%s=%%.%dX (%%ud)%%s\n", valsize);
+                        sprintf_s(format_str, "%%s=%%.%dX (%%ud)%%s\n", valsize);
 #endif //_WIN64
+                    else
+#ifdef _WIN64
+                        sprintf_s(format_str, "%%s=%%.%dllX (%%lld)%%s\n", valsize);
+#else //x86
+                        sprintf_s(format_str, "%%s=%%.%dX (%%d)%%s\n", valsize);
+#endif //_WIN64
+#ifdef _WIN64
+                    sprintf_s(format_str, "%%.%dllX (%%llud)%%s\n", valsize);
+#else //x86
+                    sprintf_s(format_str, "%%.%dX (%%ud)%%s\n", valsize);
+#endif //_WIN64
+                    dprintf_untranslated(format_str, value, value, symbolic.c_str());
+                }
                 else
+                {
 #ifdef _WIN64
-                    sprintf_s(format_str, "%%s=%%.%dllX (%%lld)%%s\n", valsize);
+                    sprintf_s(format_str, "%%.%dllX%%s\n", valsize);
 #else //x86
-                    sprintf_s(format_str, "%%s=%%.%dX (%%d)%%s\n", valsize);
+                    sprintf_s(format_str, "%%.%dX%%s\n", valsize);
 #endif //_WIN64
-#ifdef _WIN64
-                sprintf_s(format_str, "%%.%dllX (%%llud)%%s\n", valsize);
-#else //x86
-                sprintf_s(format_str, "%%.%dX (%%ud)%%s\n", valsize);
-#endif //_WIN64
-                dprintf_untranslated(format_str, value, value, symbolic.c_str());
-            }
-            else
-            {
-#ifdef _WIN64
-                sprintf_s(format_str, "%%.%dllX%%s\n", valsize);
-#else //x86
-                sprintf_s(format_str, "%%.%dX%%s\n", valsize);
-#endif //_WIN64
-                dprintf_untranslated(format_str, value, symbolic.c_str());
+                    dprintf_untranslated(format_str, value, symbolic.c_str());
+                }
             }
         }
-    }
-    else //unknown command
-    {
-        dprintf_untranslated("Unknown command/expression: \"%s\"\n", *argv);
-        return false;
+        else //unknown command
+        {
+            dprintf_untranslated("Unknown command/expression: \"%s\"\n", *argv);
+            return false;
+        }
     }
     return true;
 }
@@ -230,23 +244,26 @@ bool cbInstrZydis(int argc, char* argv[])
         if(!valfromstring(argv[2], &addr, false))
             return false;
 
-    Zydis cp;
-    if(!cp.Disassemble(addr, data))
+    Zydis zydis;
+    if(!zydis.Disassemble(addr, data))
     {
         dputs_untranslated("Failed to disassemble!\n");
         return false;
     }
 
-    auto instr = cp.GetInstr();
-    int argcount = instr->operandCount;
-    dputs_untranslated(cp.InstructionText(true).c_str());
-    dprintf_untranslated("prefix size: %d\n", instr->raw.prefixes.count);
-    if(instr->raw.rex.isDecoded)
-        dprintf_untranslated("rex.W: %d, rex.R: %d, rex.X: %d, rex.B: %d, rex.data: %02x\n", instr->raw.rex.W, instr->raw.rex.R, instr->raw.rex.X, instr->raw.rex.B, instr->raw.rex.data[0]);
-    dprintf_untranslated("disp.offset: %d, disp.size: %d\n", instr->raw.disp.offset, instr->raw.disp.size);
-    dprintf_untranslated("imm[0].offset: %d, imm[0].size: %d\n", instr->raw.imm[0].offset, instr->raw.imm[0].size);
-    dprintf_untranslated("imm[1].offset: %d, imm[1].size: %d\n", instr->raw.imm[1].offset, instr->raw.imm[1].size);
-    dprintf_untranslated("size: %d, id: %d, opcount: %d\n", cp.Size(), cp.GetId(), instr->operandCount);
+    auto instr = zydis.GetInstr();
+    int argcount = zydis.OpCount();
+    dputs_untranslated(zydis.InstructionText(true).c_str());
+    dprintf_untranslated("prefix size: %d\n", instr->info.raw.prefix_count);
+    if(instr->info.attributes & ZYDIS_ATTRIB_HAS_REX)
+    {
+        auto rexdata = data[instr->info.raw.rex.offset];
+        dprintf_untranslated("rex.W: %d, rex.R: %d, rex.X: %d, rex.B: %d, rex.data: %02x\n", instr->info.raw.rex.W, instr->info.raw.rex.R, instr->info.raw.rex.X, instr->info.raw.rex.B, rexdata);
+    }
+    dprintf_untranslated("disp.offset: %d, disp.size: %d\n", instr->info.raw.disp.offset, instr->info.raw.disp.size);
+    dprintf_untranslated("imm[0].offset: %d, imm[0].size: %d\n", instr->info.raw.imm[0].offset, instr->info.raw.imm[0].size);
+    dprintf_untranslated("imm[1].offset: %d, imm[1].size: %d\n", instr->info.raw.imm[1].offset, instr->info.raw.imm[1].size);
+    dprintf_untranslated("size: %d, id: %d, opcount: %d\n", zydis.Size(), zydis.GetId(), instr->info.operand_count);
     auto rwstr = [](uint8_t action)
     {
         switch(action)
@@ -284,11 +301,11 @@ bool cbInstrZydis(int argc, char* argv[])
     for(int i = 0; i < argcount; i++)
     {
         const auto & op = instr->operands[i];
-        dprintf("operand %d (size: %d, access: %s, visibility: %s) \"%s\", ", i + 1, op.size, rwstr(op.action), vis(op.visibility), cp.OperandText(i).c_str());
+        dprintf("operand %d (size: %d, access: %s, visibility: %s) \"%s\", ", i + 1, op.size, rwstr(op.actions), vis(op.visibility), zydis.OperandText(i).c_str());
         switch(op.type)
         {
         case ZYDIS_OPERAND_TYPE_REGISTER:
-            dprintf_untranslated("register: %s\n", cp.RegName(op.reg.value));
+            dprintf_untranslated("register: %s\n", zydis.RegName(op.reg.value));
             break;
         case ZYDIS_OPERAND_TYPE_IMMEDIATE:
             dprintf_untranslated("immediate: 0x%p\n", op.imm.value.u);
@@ -298,15 +315,17 @@ bool cbInstrZydis(int argc, char* argv[])
             //[base + index * scale +/- disp]
             const auto & mem = op.mem;
             dprintf_untranslated("memory segment: %s, base: %s, index: %s, scale: %d, displacement: 0x%p\n",
-                                 cp.RegName(mem.segment),
-                                 cp.RegName(mem.base),
-                                 cp.RegName(mem.index),
+                                 zydis.RegName(mem.segment),
+                                 zydis.RegName(mem.base),
+                                 zydis.RegName(mem.index),
                                  mem.scale,
                                  mem.disp.value);
         }
         break;
         case ZYDIS_OPERAND_TYPE_POINTER:
             dprintf_untranslated("pointer: %X:%p\n", op.ptr.segment, op.ptr.offset);
+            break;
+        default:
             break;
         }
     }
@@ -335,12 +354,12 @@ bool cbInstrVisualize(int argc, char* argv[])
     //DisassemblyBreakpointColor = #000000
     {
         //initialize
-        Zydis _cp;
+        Zydis zydis;
         duint _base = start;
         duint _size = maxaddr - start;
         Memory<unsigned char*> _data(_size);
         MemRead(_base, _data(), _size);
-        FunctionClear();
+        FunctionClear(false);
 
         //linear search with some trickery
         duint end = 0;
@@ -348,10 +367,10 @@ bool cbInstrVisualize(int argc, char* argv[])
         for(duint addr = start, fardest = 0; addr < maxaddr;)
         {
             //update GUI
-            BpClear();
-            BookmarkClear();
-            LabelClear();
-            SetContextDataEx(fdProcessInfo->hThread, UE_CIP, addr);
+            BpClear(false);
+            BookmarkClear(false);
+            LabelClear(false);
+            SetContextDataEx(hActiveThread, UE_CIP, addr);
             if(end)
                 BpNew(end, true, false, 0, BPNORMAL, 0, nullptr);
             if(jumpback)
@@ -363,14 +382,14 @@ bool cbInstrVisualize(int argc, char* argv[])
 
             //continue algorithm
             const unsigned char* curData = (addr >= _base && addr < _base + _size) ? _data() + (addr - _base) : nullptr;
-            if(_cp.Disassemble(addr, curData, MAX_DISASM_BUFFER))
+            if(zydis.Disassemble(addr, curData, MAX_DISASM_BUFFER))
             {
-                if(addr + _cp.Size() > maxaddr) //we went past the maximum allowed address
+                if(addr + zydis.Size() > maxaddr) //we went past the maximum allowed address
                     break;
 
-                if((_cp.IsJump() || _cp.IsLoop()) && _cp.OpCount() && _cp[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) //jump
+                if((zydis.IsJump() || zydis.IsLoop()) && zydis.OpCount() && zydis[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) //jump
                 {
-                    duint dest = (duint)_cp[0].imm.value.u;
+                    duint dest = (duint)zydis[0].imm.value.u;
 
                     if(dest >= maxaddr) //jump across function boundaries
                     {
@@ -380,19 +399,19 @@ bool cbInstrVisualize(int argc, char* argv[])
                     {
                         fardest = dest;
                     }
-                    else if(end && dest < end && _cp.GetId() == ZYDIS_MNEMONIC_JMP) //save the last JMP backwards
+                    else if(end && dest < end && zydis.GetId() == ZYDIS_MNEMONIC_JMP) //save the last JMP backwards
                     {
                         jumpback = addr;
                     }
                 }
-                else if(_cp.IsRet()) //possible function end?
+                else if(zydis.IsRet()) //possible function end?
                 {
                     end = addr;
                     if(fardest < addr) //we stop if the farthest JXX destination forward is before this RET
                         break;
                 }
 
-                addr += _cp.Size();
+                addr += zydis.Size();
             }
             else
                 addr++;
@@ -401,9 +420,9 @@ bool cbInstrVisualize(int argc, char* argv[])
 
         //update GUI
         FunctionAdd(start, end, false);
-        BpClear();
-        BookmarkClear();
-        SetContextDataEx(fdProcessInfo->hThread, UE_CIP, start);
+        BpClear(false);
+        BookmarkClear(false);
+        SetContextDataEx(hActiveThread, UE_CIP, start);
         DebugUpdateGuiAsync(start, false);
     }
     return true;
@@ -458,22 +477,22 @@ bool cbInstrBriefcheck(int argc, char* argv[])
         return false;
     Memory<unsigned char*> buffer(size + 16);
     DbgMemRead(base, buffer(), size);
-    Zydis cp;
+    Zydis zydis;
     std::unordered_set<String> reported;
     for(duint i = 0; i < size;)
     {
-        if(!cp.Disassemble(base + i, buffer() + i, 16))
+        if(!zydis.Disassemble(base + i, buffer() + i, 16))
         {
             i++;
             continue;
         }
-        i += cp.Size();
-        auto mnem = StringUtils::ToLower(cp.Mnemonic());
+        i += zydis.Size();
+        auto mnem = StringUtils::ToLower(zydis.Mnemonic());
         auto brief = MnemonicHelp::getBriefDescription(mnem.c_str());
         if(brief.length() || reported.count(mnem))
             continue;
         reported.insert(mnem);
-        dprintf_untranslated("%p: %s\n", cp.Address(), mnem.c_str());
+        dprintf_untranslated("%p: %s\n", zydis.Address(), mnem.c_str());
     }
     return true;
 }
@@ -529,7 +548,7 @@ bool cbInstrDebugFlags(int argc, char* argv[])
         dprintf_untranslated("Usage: DebugFlags 0xFFFFFFFF\n");
         return false;
     }
-    auto debugFlags = DbgValFromString(argv[1]);
+    auto debugFlags = (DWORD)DbgValFromString(argv[1]);
     dbgsetdebugflags(debugFlags);
     dprintf_untranslated("DebugFlags = 0x%08X\n", debugFlags);
     return true;
@@ -584,4 +603,11 @@ bool cbInstrLabelRuntimeFunctions(int argc, char* argv[])
 #else
     return false;
 #endif // _WIN64
+}
+
+bool cbInstrCmdTest(int argc, char* argv[])
+{
+    for(int i = 0; i < argc; i++)
+        dprintf_untranslated("argv[%d]:%s\n", i, argv[i]);
+    return true;
 }

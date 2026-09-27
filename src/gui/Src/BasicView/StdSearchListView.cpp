@@ -1,6 +1,11 @@
 #include "StdSearchListView.h"
 #include "MethodInvoker.h"
 
+StdSearchListView::StdSearchListView(QWidget* parent)
+    : StdSearchListView(parent, true, false)
+{
+}
+
 StdSearchListView::StdSearchListView(QWidget* parent, bool enableRegex, bool enableLock)
     : StdSearchListView(parent, enableRegex, enableLock, new StdTableSearchList())
 {
@@ -57,16 +62,22 @@ void StdSearchListView::loadColumnFromConfig(const QString & viewName)
     stdSearchList()->loadColumnFromConfig(viewName);
 }
 
-void StdSearchListView::setRowCount(dsint count)
+void StdSearchListView::setRowCount(duint count)
 {
     //clearFilter();
     stdList()->setRowCount(count);
 }
 
-void StdSearchListView::setCellContent(int r, int c, QString s)
+void StdSearchListView::setCellContent(duint row, duint column, QString s)
 {
     //clearFilter();
-    stdList()->setCellContent(r, c, s);
+    stdList()->setCellContent(row, column, s);
+}
+
+void StdSearchListView::setCellUserdata(duint row, duint column, duint userdata)
+{
+    //clearFilter();
+    stdList()->setCellUserdata(row, column, userdata);
 }
 
 void StdSearchListView::reloadData()
@@ -79,16 +90,10 @@ void StdSearchListView::reloadData()
     });
 }
 
-void StdSearchListView::setSearchStartCol(int col)
+void StdSearchListView::setSearchStartCol(duint col)
 {
     if(col < stdList()->getColumnCount())
         mSearchStartCol = col;
-}
-
-bool StdSearchListView::setDisassemblyPopupEnabled(bool enabled)
-{
-    stdList()->setDisassemblyPopupEnabled(enabled);
-    return stdSearchList()->setDisassemblyPopupEnabled(enabled);
 }
 
 StdTable* StdSearchListView::stdList()

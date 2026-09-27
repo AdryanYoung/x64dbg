@@ -4,8 +4,10 @@
 #include "Configuration.h"
 #include "Bridge.h"
 #include "BrowseDialog.h"
-#include "StdSearchListView.h"
+#include "StdIconSearchListView.h"
 #include "ZehSymbolTable.h"
+#include "DisassemblyPopup.h"
+#include <QDesktopServices>
 #include <QVBoxLayout>
 #include <QProcess>
 #include <QFileDialog>
@@ -18,76 +20,6 @@ enum
     ColParty,
     ColPath,
     ColStatus,
-};
-
-class ModuleStdTable final : public StdTable
-{
-public:
-    ModuleStdTable()
-    {
-        Initialize();
-    }
-
-    void updateColors() override
-    {
-        StdTable::updateColors();
-        mSymbolUnloadedTextColor = ConfigColor("SymbolUnloadedTextColor");
-        mSymbolLoadingTextColor = ConfigColor("SymbolLoadingTextColor");
-        mSymbolLoadedTextColor = ConfigColor("SymbolLoadedTextColor");
-        mSymbolUserTextColor = ConfigColor("SymbolUserTextColor");
-        mSymbolSystemTextColor = ConfigColor("SymbolSystemTextColor");
-    }
-
-    QColor getCellColor(int r, int c) override
-    {
-        if(c == ColParty || c == ColPath)
-        {
-            if(DbgFunctions()->ModGetParty(getCellUserdata(r, ColBase)) != mod_system)
-                return mSymbolUserTextColor;
-            else
-                return mSymbolSystemTextColor;
-        }
-        if(c != ColModule && c != ColStatus)
-            return mTextColor;
-        switch(getStatus(r))
-        {
-        default:
-        case MODSYMUNLOADED:
-            return mSymbolUnloadedTextColor;
-        case MODSYMLOADING:
-            return mSymbolLoadingTextColor;
-        case MODSYMLOADED:
-            return mSymbolLoadedTextColor;
-        }
-    }
-
-    QString getCellContent(int r, int c) override
-    {
-        if(c != ColStatus)
-            return StdTable::getCellContent(r, c);
-        switch(getStatus(r))
-        {
-        default:
-        case MODSYMUNLOADED:
-            return tr("Unloaded");
-        case MODSYMLOADING:
-            return tr("Loading");
-        case MODSYMLOADED:
-            return tr("Loaded");
-        }
-    }
-
-private:
-    MODULESYMBOLSTATUS getStatus(int r)
-    {
-        return DbgFunctions()->ModSymbolStatus(getCellUserdata(r, 0));
-    }
-
-    QColor mSymbolSystemTextColor;
-    QColor mSymbolUserTextColor;
-    QColor mSymbolUnloadedTextColor;
-    QColor mSymbolLoadingTextColor;
-    QColor mSymbolLoadedTextColor;
 };
 
 class SymbolSearchList : public AbstractSearchList
@@ -127,7 +59,7 @@ public:
         return mSearchList;
     }
 
-    void filter(const QString & filter, FilterType type, int startColumn) override
+    void filter(const QString & filter, FilterType type, duint startColumn) override
     {
         mSearchList->setRowCount(0);
         int newRowCount = 0;
@@ -157,6 +89,79 @@ private:
     ZehSymbolTable* mSearchList;
 };
 
+ModuleStdTable::ModuleStdTable()
+{
+    Initialize();
+    setIconColumn(ColParty);
+}
+
+void ModuleStdTable::updateColors()
+{
+    StdIconTable::updateColors();
+    mSymbolUnloadedTextColor = ConfigColor("SymbolUnloadedTextColor");
+    mSymbolLoadingTextColor = ConfigColor("SymbolLoadingTextColor");
+    mSymbolLoadedTextColor = ConfigColor("SymbolLoadedTextColor");
+    mSymbolUserTextColor = ConfigColor("SymbolUserTextColor");
+    mSymbolSystemTextColor = ConfigColor("SymbolSystemTextColor");
+}
+
+QColor ModuleStdTable::getCellColor(duint r, duint c)
+{
+    if(c == ColParty || c == ColPath)
+    {
+        if(DbgFunctions()->ModGetParty(getCellUserdata(r, ColBase)) != mod_system)
+            return mSymbolUserTextColor;
+        else
+            return mSymbolSystemTextColor;
+    }
+    if(c != ColModule && c != ColStatus)
+        return mTextColor;
+    switch(getStatus(r))
+    {
+    default:
+    case MODSYMUNLOADED:
+        return mSymbolUnloadedTextColor;
+    case MODSYMLOADING:
+        return mSymbolLoadingTextColor;
+    case MODSYMLOADED:
+        return mSymbolLoadedTextColor;
+    }
+}
+
+QString ModuleStdTable::getCellContent(duint r, duint c)
+{
+    if(c != ColStatus)
+        return StdTable::getCellContent(r, c);
+    switch(getStatus(r))
+    {
+    default:
+    case MODSYMUNLOADED:
+        return tr("Unloaded");
+    case MODSYMLOADING:
+        return tr("Loading");
+    case MODSYMLOADED:
+        return tr("Loaded");
+    }
+}
+
+void ModuleStdTable::sortRows(duint column, bool ascending)
+{
+    // HACK: when sorting by status, forcefully fill in the text so the sorting works
+    if(column == ColStatus)
+    {
+        for(duint row = 0; row < mData.size(); row++)
+        {
+            mData[row][column].text = getCellContent(row, column);
+        }
+    }
+    StdIconTable::sortRows(column, ascending);
+}
+
+MODULESYMBOLSTATUS ModuleStdTable::getStatus(duint r)
+{
+    return DbgFunctions()->ModSymbolStatus(getCellUserdata(r, 0));
+}
+
 SymbolView::SymbolView(QWidget* parent) : QWidget(parent), ui(new Ui::SymbolView)
 {
     ui->setupUi(this);
@@ -171,18 +176,23 @@ SymbolView::SymbolView(QWidget* parent) : QWidget(parent), ui(new Ui::SymbolView
     // Create reference view
     mSymbolSearchList = new SymbolSearchList();
     mSymbolList = new SearchListView(this, mSymbolSearchList, true, true);
+    mSymbolList->setAccessibleName(tr("Symbols"));
     mSymbolList->mSearchStartCol = 1;
 
+    // Add a disassembly popup
+    new DisassemblyPopup(mSymbolSearchList->list(), Bridge::getArchitecture());
+    new DisassemblyPopup(mSymbolSearchList->searchList(), Bridge::getArchitecture());
+
     // Create module list
-    mModuleList = new StdSearchListView(this, true, false, new StdTableSearchList(new ModuleStdTable(), new ModuleStdTable()));
+    mModuleList = new StdIconSearchListView(this, true, false, new StdTableSearchList(new ModuleStdTable(), new ModuleStdTable()));
+    mModuleList->setAccessibleName(tr("Modules"));
     mModuleList->setSearchStartCol(ColBase);
     mModuleList->enableMultiSelection(true);
     mModuleList->setAddressColumn(ColBase, true);
-    mModuleList->setDisassemblyPopupEnabled(false);
     int charwidth = mModuleList->getCharWidth();
     mModuleList->addColumnAt(8 + charwidth * 2 * sizeof(dsint), tr("Base"), true);
     mModuleList->addColumnAt(300, tr("Module"), true);
-    mModuleList->addColumnAt(8 + charwidth * 8, tr("Party"), true);
+    mModuleList->addColumnAt(charwidth * 9, tr("Party"), true); // with icon
     mModuleList->addColumnAt(8 + charwidth * 60, tr("Path"), true);
     mModuleList->addColumnAt(8 + charwidth * 8, tr("Status"), true);
     mModuleList->loadColumnFromConfig("Module");
@@ -214,13 +224,13 @@ SymbolView::SymbolView(QWidget* parent) : QWidget(parent), ui(new Ui::SymbolView
     setupContextMenu();
 
     //Signals and slots
-    connect(Bridge::getBridge(), SIGNAL(repaintTableView()), this, SLOT(updateStyle()));
+    connect(Bridge::getBridge(), SIGNAL(repaintTableView()), this, SLOT(reloadDataSlot()));
     connect(Bridge::getBridge(), SIGNAL(addMsgToSymbolLog(QString)), this, SLOT(addMsgToSymbolLogSlot(QString)));
     connect(Bridge::getBridge(), SIGNAL(clearLog()), this, SLOT(clearSymbolLogSlot()));
     connect(Bridge::getBridge(), SIGNAL(clearSymbolLog()), this, SLOT(clearSymbolLogSlot()));
     connect(Bridge::getBridge(), SIGNAL(selectionSymmodGet(SELECTIONDATA*)), this, SLOT(selectionGetSlot(SELECTIONDATA*)));
-    connect(mModuleList->stdList(), SIGNAL(selectionChangedSignal(int)), this, SLOT(moduleSelectionChanged(int)));
-    connect(mModuleList->stdSearchList(), SIGNAL(selectionChangedSignal(int)), this, SLOT(moduleSelectionChanged(int)));
+    connect(Bridge::getBridge(), SIGNAL(focusSymmod()), mModuleList, SLOT(setFocus()));
+    connect(mModuleList, SIGNAL(selectionChanged(duint)), this, SLOT(moduleSelectionChanged(duint)));
     connect(mModuleList, SIGNAL(emptySearchResult()), this, SLOT(emptySearchResultSlot()));
     connect(mModuleList, SIGNAL(listContextMenuSignal(QMenu*)), this, SLOT(moduleContextMenu(QMenu*)));
     connect(mModuleList, SIGNAL(enterPressedSignal()), this, SLOT(moduleFollow()));
@@ -283,7 +293,7 @@ void SymbolView::invalidateSymbolSource(duint base)
             mSymbolSearchList->mSearchList->setRowCount(0);
             mSymbolSearchList->mSearchList->setHighlightText(QString());
             GuiSymbolLogAdd(QString("[SymbolView] reload symbols for base %1\n").arg(ToPtrString(base)).toUtf8().constData());
-            // TODO: properly reload symbol list
+            emit mModuleList->mCurList->selectionChanged(mModuleList->mCurList->getInitialSelection());
             break;
         }
     }
@@ -292,28 +302,31 @@ void SymbolView::invalidateSymbolSource(duint base)
 
 void SymbolView::setupContextMenu()
 {
-    QIcon disassembler = DIcon(ArchValue("processor32.png", "processor64.png"));
+    QIcon disassembler = DIcon(ArchValue("processor32", "processor64"));
     //Symbols
     mFollowSymbolAction = new QAction(disassembler, tr("&Follow in Disassembler"), this);
     connect(mFollowSymbolAction, SIGNAL(triggered()), this, SLOT(symbolFollow()));
 
-    mFollowSymbolDumpAction = new QAction(DIcon("dump.png"), tr("Follow in &Dump"), this);
+    mFollowSymbolDumpAction = new QAction(DIcon("dump"), tr("Follow in &Dump"), this);
     connect(mFollowSymbolDumpAction, SIGNAL(triggered()), this, SLOT(symbolFollowDump()));
 
-    mFollowSymbolImportAction = new QAction(DIcon("import.png"), tr("Follow &imported address"), this);
+    mFollowSymbolImportAction = new QAction(DIcon("import"), tr("Follow &imported address"), this);
     connect(mFollowSymbolImportAction, SIGNAL(triggered(bool)), this, SLOT(symbolFollowImport()));
 
-    mToggleBreakpoint = new QAction(DIcon("breakpoint.png"), tr("Toggle Breakpoint"), this);
+    mToggleBreakpoint = new QAction(DIcon("breakpoint"), tr("Toggle Breakpoint"), this);
     mToggleBreakpoint->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mToggleBreakpoint);
     mSymbolSearchList->addAction(mToggleBreakpoint);
     connect(mToggleBreakpoint, SIGNAL(triggered()), this, SLOT(toggleBreakpoint()));
 
-    mToggleBookmark = new QAction(DIcon("bookmark_toggle.png"), tr("Toggle Bookmark"), this);
+    mToggleBookmark = new QAction(DIcon("bookmark_toggle"), tr("Toggle Bookmark"), this);
     mToggleBookmark->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mToggleBookmark);
     mSymbolSearchList->addAction(mToggleBookmark);
     connect(mToggleBookmark, SIGNAL(triggered()), this, SLOT(toggleBookmark()));
+
+    mLabelHelp = new QAction(DIcon("help"), tr("Help on Symbolic Name"), this);
+    connect(mLabelHelp, SIGNAL(triggered()), this, SLOT(labelHelpSlot()));
 
     //Modules
     mFollowModuleAction = new QAction(disassembler, tr("&Follow in Disassembler"), this);
@@ -324,61 +337,61 @@ void SymbolView::setupContextMenu()
     mFollowModuleEntryAction = new QAction(disassembler, tr("Follow &Entry Point in Disassembler"), this);
     connect(mFollowModuleEntryAction, SIGNAL(triggered()), this, SLOT(moduleEntryFollow()));
 
-    mFollowInMemMap = new QAction(DIcon("memmap_find_address_page.png"), tr("Follow in Memory Map"), this);
+    mFollowInMemMap = new QAction(DIcon("memmap_find_address_page"), tr("Follow in Memory Map"), this);
     mFollowInMemMap->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mFollowInMemMap);
     mModuleList->addAction(mFollowInMemMap);
     connect(mFollowInMemMap, SIGNAL(triggered()), this, SLOT(moduleFollowMemMap()));
 
-    mDownloadSymbolsAction = new QAction(DIcon("pdb.png"), tr("&Download Symbols for This Module"), this);
+    mDownloadSymbolsAction = new QAction(DIcon("pdb"), tr("&Download Symbols for This Module"), this);
     mDownloadSymbolsAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mDownloadSymbolsAction);
     mModuleList->addAction(mDownloadSymbolsAction);
     connect(mDownloadSymbolsAction, SIGNAL(triggered()), this, SLOT(moduleDownloadSymbols()));
 
-    mDownloadAllSymbolsAction = new QAction(DIcon("pdb.png"), tr("Download Symbols for &All Modules"), this);
+    mDownloadAllSymbolsAction = new QAction(DIcon("pdb"), tr("Download Symbols for &All Modules"), this);
     mDownloadAllSymbolsAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mDownloadAllSymbolsAction);
     mModuleList->addAction(mDownloadAllSymbolsAction);
     connect(mDownloadAllSymbolsAction, SIGNAL(triggered()), this, SLOT(moduleDownloadAllSymbols()));
 
-    mCopyPathAction = new QAction(DIcon("copyfilepath.png"), tr("Copy File &Path"), this);
+    mCopyPathAction = new QAction(DIcon("copyfilepath"), tr("Copy File &Path"), this);
     mCopyPathAction->setShortcutContext(Qt::WidgetShortcut);
     this->addAction(mCopyPathAction);
     mModuleList->addAction(mCopyPathAction);
     connect(mCopyPathAction, SIGNAL(triggered()), this, SLOT(moduleCopyPath()));
 
-    mBrowseInExplorer = new QAction(DIcon("browseinexplorer.png"), tr("Browse in Explorer"), this);
+    mBrowseInExplorer = new QAction(DIcon("browseinexplorer"), tr("Browse in Explorer"), this);
     mBrowseInExplorer->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mBrowseInExplorer);
     mModuleList->addAction(mBrowseInExplorer);
     connect(mBrowseInExplorer, SIGNAL(triggered()), this, SLOT(moduleBrowse()));
 
-    mLoadLib = new QAction(DIcon("lib_load.png"), tr("Load library..."), this);
+    mLoadLib = new QAction(DIcon("lib_load"), tr("Load library..."), this);
     mLoadLib->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mLoadLib);
     mModuleList->addAction(mLoadLib);
     connect(mLoadLib, SIGNAL(triggered()), this, SLOT(moduleLoad()));
 
-    mFreeLib = new QAction(DIcon("lib_free.png"), tr("Free library"), this);
+    mFreeLib = new QAction(DIcon("lib_free"), tr("Free library"), this);
     mFreeLib->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mFreeLib);
     mModuleList->addAction(mFreeLib);
     connect(mFreeLib, SIGNAL(triggered()), this, SLOT(moduleFree()));
 
-    mModSetUserAction = new QAction(DIcon("markasuser.png"), tr("Mark as &user module"), this);
+    mModSetUserAction = new QAction(DIcon("markasuser"), tr("Mark as &user module"), this);
     mModSetUserAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mModSetUserAction);
     mModuleList->addAction(mModSetUserAction);
     connect(mModSetUserAction, SIGNAL(triggered()), this, SLOT(moduleSetUser()));
 
-    mModSetSystemAction = new QAction(DIcon("markassystem.png"), tr("Mark as &system module"), this);
+    mModSetSystemAction = new QAction(DIcon("markassystem"), tr("Mark as &system module"), this);
     mModSetSystemAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mModSetSystemAction);
     mModuleList->addAction(mModSetSystemAction);
     connect(mModSetSystemAction, SIGNAL(triggered()), this, SLOT(moduleSetSystem()));
 
-    mModSetPartyAction = new QAction(DIcon("markasparty.png"), tr("Mark as &party..."), this);
+    mModSetPartyAction = new QAction(DIcon("markasparty"), tr("Mark as &party..."), this);
     mModSetPartyAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     this->addAction(mModSetPartyAction);
     mModuleList->addAction(mModSetPartyAction);
@@ -407,10 +420,14 @@ void SymbolView::refreshShortcutsSlot()
 
 void SymbolView::updateStyle()
 {
-    mModuleList->stdList()->reloadData();
-    mModuleList->stdSearchList()->reloadData();
     ui->symbolLogEdit->setFont(ConfigFont("Log"));
     ui->symbolLogEdit->setStyleSheet(QString("QTextEdit { color: %1; background-color: %2 }").arg(ConfigColor("AbstractTableViewTextColor").name(), ConfigColor("AbstractTableViewBackgroundColor").name()));
+}
+
+void SymbolView::reloadDataSlot()
+{
+    mModuleList->stdList()->reloadData();
+    mModuleList->stdSearchList()->reloadData();
 }
 
 void SymbolView::addMsgToSymbolLogSlot(QString msg)
@@ -424,7 +441,7 @@ void SymbolView::clearSymbolLogSlot()
     ui->symbolLogEdit->clear();
 }
 
-void SymbolView::moduleSelectionChanged(int index)
+void SymbolView::moduleSelectionChanged(duint index)
 {
     Q_UNUSED(index);
     setUpdatesEnabled(false);
@@ -433,9 +450,9 @@ void SymbolView::moduleSelectionChanged(int index)
     for(auto index : mModuleList->mCurList->getSelection())
     {
         QString modBase = mModuleList->mCurList->getCellContent(index, ColBase);
-        duint wVA;
-        if(DbgFunctions()->ValFromString(modBase.toUtf8().constData(), &wVA))
-            selectedModules.push_back(wVA);
+        duint va = 0;
+        if(DbgFunctions()->ValFromString(modBase.toUtf8().constData(), &va))
+            selectedModules.push_back(va);
     }
 
     std::vector<SYMBOLPTR> data;
@@ -489,12 +506,15 @@ void SymbolView::updateSymbolList(int module_count, SYMBOLMODULEINFO* modules)
         {
         case 0:
             mModuleList->stdList()->setCellContent(i, ColParty, tr("User"));
+            mModuleList->setRowIcon(i, DIcon("markasuser"));
             break;
         case 1:
             mModuleList->stdList()->setCellContent(i, ColParty, tr("System"));
+            mModuleList->setRowIcon(i, DIcon("markassystem"));
             break;
         default:
             mModuleList->stdList()->setCellContent(i, ColParty, tr("Party: %1").arg(party));
+            mModuleList->setRowIcon(i, DIcon("markasparty"));
             break;
         }
         char szModPath[MAX_PATH] = "";
@@ -508,17 +528,18 @@ void SymbolView::updateSymbolList(int module_count, SYMBOLMODULEINFO* modules)
         BridgeFree(modules);
 }
 
-void SymbolView::symbolContextMenu(QMenu* wMenu)
+void SymbolView::symbolContextMenu(QMenu* menu)
 {
     if(!mSymbolList->mCurList->getRowCount())
         return;
-    wMenu->addAction(mFollowSymbolAction);
-    wMenu->addAction(mFollowSymbolDumpAction);
+    menu->addAction(mFollowSymbolAction);
+    menu->addAction(mFollowSymbolDumpAction);
     if(mSymbolList->mCurList->getCellContent(mSymbolList->mCurList->getInitialSelection(), 1) == tr("Import"))
-        wMenu->addAction(mFollowSymbolImportAction);
-    wMenu->addSeparator();
-    wMenu->addAction(mToggleBreakpoint);
-    wMenu->addAction(mToggleBookmark);
+        menu->addAction(mFollowSymbolImportAction);
+    menu->addAction(mLabelHelp);
+    menu->addSeparator();
+    menu->addAction(mToggleBreakpoint);
+    menu->addAction(mToggleBookmark);
 }
 
 void SymbolView::symbolRefreshCurrent()
@@ -542,7 +563,7 @@ void SymbolView::symbolFollowImport()
     auto addr = DbgValFromString(QString("[%1]").arg(addrText).toUtf8().constData());
     if(!DbgMemIsValidReadPtr(addr))
         return;
-    if(DbgFunctions()->MemIsCodePage(addr, false))
+    if(DbgFunctions()->MemIsCodePage(addr, true))
     {
         DbgCmdExec(QString("disasm %1").arg(ToPtrString(addr)));
     }
@@ -555,7 +576,7 @@ void SymbolView::symbolFollowImport()
 
 void SymbolView::symbolSelectModule(duint base)
 {
-    for(dsint i = 0; i < mModuleList->stdList()->getRowCount(); i++)
+    for(duint i = 0; i < mModuleList->stdList()->getRowCount(); i++)
     {
         if(mModuleList->stdList()->getCellUserdata(i, ColBase) == base)
         {
@@ -567,6 +588,34 @@ void SymbolView::symbolSelectModule(duint base)
     }
 }
 
+void SymbolView::labelHelpSlot()
+{
+    QString topic = mSymbolList->mCurList->getCellContent(mSymbolList->mCurList->getInitialSelection(), ZehSymbolTable::ColUndecorated);
+    if(topic.isEmpty())
+        topic = mSymbolList->mCurList->getCellContent(mSymbolList->mCurList->getInitialSelection(), ZehSymbolTable::ColDecorated);
+    if(topic.isEmpty())
+        return;
+    char setting[MAX_SETTING_SIZE] = "";
+    if(!BridgeSettingGet("Misc", "HelpOnSymbolicNameUrl", setting))
+    {
+        //"execute://winhlp32.exe -k@topic ..\\win32.hlp";
+        strcpy_s(setting, "https://www.google.com/search?q=@topic");
+        BridgeSettingSet("Misc", "HelpOnSymbolicNameUrl", setting);
+    }
+    QString baseUrl(setting);
+    QString fullUrl = baseUrl.replace("@topic", topic);
+
+    if(baseUrl.startsWith("execute://"))
+    {
+        QString command = fullUrl.right(fullUrl.length() - 10);
+        QProcess::execute(command);
+    }
+    else
+    {
+        QDesktopServices::openUrl(QUrl(fullUrl));
+    }
+}
+
 void SymbolView::enterPressedSlot()
 {
     auto addr = DbgValFromString(mSymbolList->mCurList->getCellContent(mSymbolList->mCurList->getInitialSelection(), 0).toUtf8().constData());
@@ -574,7 +623,7 @@ void SymbolView::enterPressedSlot()
         return;
     if(mSymbolList->mCurList->getCellContent(mSymbolList->mCurList->getInitialSelection(), 1) == tr("Import"))
         symbolFollowImport();
-    else if(DbgFunctions()->MemIsCodePage(addr, false))
+    else if(DbgFunctions()->MemIsCodePage(addr, true))
         symbolFollow();
     else
     {
@@ -583,43 +632,43 @@ void SymbolView::enterPressedSlot()
     }
 }
 
-void SymbolView::moduleContextMenu(QMenu* wMenu)
+void SymbolView::moduleContextMenu(QMenu* menu)
 {
     if(!DbgIsDebugging() || !mModuleList->mCurList->getRowCount())
         return;
 
-    wMenu->addAction(mFollowModuleAction);
-    wMenu->addAction(mFollowModuleEntryAction);
-    wMenu->addAction(mFollowInMemMap);
-    wMenu->addAction(mDownloadSymbolsAction);
-    wMenu->addAction(mDownloadAllSymbolsAction);
+    menu->addAction(mFollowModuleAction);
+    menu->addAction(mFollowModuleEntryAction);
+    menu->addAction(mFollowInMemMap);
+    menu->addAction(mDownloadSymbolsAction);
+    menu->addAction(mDownloadAllSymbolsAction);
     duint modbase = DbgValFromString(mModuleList->mCurList->getCellContent(mModuleList->mCurList->getInitialSelection(), ColBase).toUtf8().constData());
     char szModPath[MAX_PATH] = "";
     if(DbgFunctions()->ModPathFromAddr(modbase, szModPath, _countof(szModPath)))
     {
-        wMenu->addAction(mCopyPathAction);
-        wMenu->addAction(mBrowseInExplorer);
+        menu->addAction(mCopyPathAction);
+        menu->addAction(mBrowseInExplorer);
     }
-    wMenu->addAction(mLoadLib);
-    wMenu->addAction(mFreeLib);
-    wMenu->addSeparator();
+    menu->addAction(mLoadLib);
+    menu->addAction(mFreeLib);
+    menu->addSeparator();
     int party = DbgFunctions()->ModGetParty(modbase);
     if(party != 0)
-        wMenu->addAction(mModSetUserAction);
+        menu->addAction(mModSetUserAction);
     if(party != 1)
-        wMenu->addAction(mModSetSystemAction);
-    wMenu->addAction(mModSetPartyAction);
-    QMenu wCopyMenu(tr("&Copy"), this);
-    wCopyMenu.setIcon(DIcon("copy.png"));
-    mModuleList->mCurList->setupCopyMenu(&wCopyMenu);
-    if(wCopyMenu.actions().length())
+        menu->addAction(mModSetSystemAction);
+    menu->addAction(mModSetPartyAction);
+    QMenu copyMenu(tr("&Copy"), this);
+    copyMenu.setIcon(DIcon("copy"));
+    mModuleList->mCurList->setupCopyMenu(&copyMenu);
+    if(copyMenu.actions().length())
     {
-        wMenu->addSeparator();
-        wMenu->addMenu(&wCopyMenu);
+        menu->addSeparator();
+        menu->addMenu(&copyMenu);
     }
-    wMenu->addSeparator();
+    menu->addSeparator();
     DbgMenuPrepare(GUI_SYMMOD_MENU);
-    wMenu->addActions(mPluginMenu->actions());
+    menu->addActions(mPluginMenu->actions());
 }
 
 void SymbolView::moduleFollow()
@@ -688,7 +737,7 @@ void SymbolView::moduleLoad()
     if(browse.exec() != QDialog::Accepted && browse.path.length())
         return;
     auto fileName = browse.path;
-    DbgCmdExec(QString("loadlib \"%1\"").arg(fileName.replace("\\", "\\\\")));
+    DbgCmdExec(QString("loadlib \"%1\"").arg(DbgCmdEscape(fileName)));
 }
 
 void SymbolView::moduleFree()
@@ -727,30 +776,30 @@ void SymbolView::toggleBreakpoint()
     for(auto selectedIdx : selection)
     {
         QString addrText = mSymbolList->mCurList->getCellContent(selectedIdx, 0);
-        duint wVA;
-        if(!DbgFunctions()->ValFromString(addrText.toUtf8().constData(), &wVA))
+        duint va;
+        if(!DbgFunctions()->ValFromString(addrText.toUtf8().constData(), &va))
             return;
 
         //Import means that the address is an IAT entry so we read the actual function address
         if(mSymbolList->mCurList->getCellContent(selectedIdx, 1) == tr("Import"))
-            DbgMemRead(wVA, &wVA, sizeof(wVA));
+            DbgMemRead(va, &va, sizeof(va));
 
-        if(!DbgMemIsValidReadPtr(wVA))
+        if(!DbgMemIsValidReadPtr(va))
             return;
 
-        BPXTYPE wBpType = DbgGetBpxTypeAt(wVA);
-        QString wCmd;
+        BPXTYPE bpType = DbgGetBpxTypeAt(va);
+        QString cmd;
 
-        if((wBpType & bp_normal) == bp_normal)
+        if((bpType & bp_normal) == bp_normal)
         {
-            wCmd = "bc " + ToPtrString(wVA);
+            cmd = "bc " + ToPtrString(va);
         }
         else
         {
-            wCmd = "bp " + ToPtrString(wVA);
+            cmd = "bp " + ToPtrString(va);
         }
 
-        DbgCmdExec(wCmd);
+        DbgCmdExec(cmd);
     }
 }
 
@@ -766,21 +815,21 @@ void SymbolView::toggleBookmark()
     for(auto index : selection)
     {
         QString addrText = mSymbolList->mCurList->getCellContent(index, 0);
-        duint wVA;
-        if(!DbgFunctions()->ValFromString(addrText.toUtf8().constData(), &wVA))
+        duint va;
+        if(!DbgFunctions()->ValFromString(addrText.toUtf8().constData(), &va))
             return;
-        if(!DbgMemIsValidReadPtr(wVA))
+        if(!DbgMemIsValidReadPtr(va))
             return;
 
         bool result;
-        if(DbgGetBookmarkAt(wVA))
-            result = DbgSetBookmarkAt(wVA, false);
+        if(DbgGetBookmarkAt(va))
+            result = DbgSetBookmarkAt(va, false);
         else
-            result = DbgSetBookmarkAt(wVA, true);
+            result = DbgSetBookmarkAt(va, true);
         if(!result)
         {
             QMessageBox msg(QMessageBox::Critical, tr("Error!"), tr("DbgSetBookmarkAt failed!"));
-            msg.setWindowIcon(DIcon("compile-error.png"));
+            msg.setWindowIcon(DIcon("compile-error"));
             msg.setParent(this, Qt::Dialog);
             msg.setWindowFlags(msg.windowFlags() & (~Qt::WindowContextHelpButtonHint));
             msg.exec();
@@ -817,8 +866,7 @@ void SymbolView::moduleSetParty()
     duint modbase = DbgValFromString(mModuleList->mCurList->getCellContent(mModuleList->mCurList->getInitialSelection(), ColBase).toUtf8().constData());
     party = DbgFunctions()->ModGetParty(modbase);
     QString mLineEditeditText;
-    QIcon bookmark = DIcon("bookmark.png");
-    if(SimpleInputBox(this, tr("Mark the party of the module as"), QString::number(party), mLineEditeditText, tr("0 is user module, 1 is system module."), &bookmark))
+    if(SimpleInputBox(this, tr("Mark the party of the module as"), QString::number(party), mLineEditeditText, tr("0 is user module, 1 is system module."), DIcon("bookmark")))
     {
         bool ok;
         party = mLineEditeditText.toInt(&ok);

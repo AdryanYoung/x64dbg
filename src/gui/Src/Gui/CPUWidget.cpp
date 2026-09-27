@@ -14,22 +14,26 @@
 #include "Configuration.h"
 #include "TabWidget.h"
 
-CPUWidget::CPUWidget(QWidget* parent) : QWidget(parent), ui(new Ui::CPUWidget)
+CPUWidget::CPUWidget(Architecture* architecture, QWidget* parent)
+    : QWidget(parent),
+      ui(new Ui::CPUWidget),
+      mArchitecture(architecture)
 {
     ui->setupUi(this);
+    setLayoutDirection(Qt::LeftToRight);
     setDefaultDisposition();
 
     setStyleSheet("AbstractTableView:focus, CPURegistersView:focus, CPUSideBar:focus { border: 1px solid #000000; }");
 
-    mDisas = new CPUDisassembly(this, true);
-    mSideBar = new CPUSideBar(mDisas);
-    mDisas->setSideBar(mSideBar);
-    mArgumentWidget = new CPUArgumentWidget(this);
-    mGraph = new DisassemblerGraphView(this);
+    mDisassembly = new CPUDisassembly(architecture, true, this);
+    mSideBar = new CPUSideBar(mDisassembly);
+    mDisassembly->setSideBar(mSideBar);
+    mArgumentWidget = new CPUArgumentWidget(architecture, this);
+    mGraph = new DisassemblerGraphView(architecture, this);
 
-    connect(mDisas, SIGNAL(tableOffsetChanged(dsint)), mSideBar, SLOT(changeTopmostAddress(dsint)));
-    connect(mDisas, SIGNAL(viewableRowsChanged(int)), mSideBar, SLOT(setViewableRows(int)));
-    connect(mDisas, SIGNAL(selectionChanged(dsint)), mSideBar, SLOT(setSelection(dsint)));
+    connect(mDisassembly, SIGNAL(tableOffsetChanged(duint)), mSideBar, SLOT(changeTopmostAddress(duint)));
+    connect(mDisassembly, SIGNAL(viewableRowsChanged(duint)), mSideBar, SLOT(setViewableRows(duint)));
+    connect(mDisassembly, SIGNAL(selectionChanged(duint)), mSideBar, SLOT(setSelection(duint)));
     connect(mGraph, SIGNAL(detachGraph()), this, SLOT(detachGraph()));
     connect(Bridge::getBridge(), SIGNAL(dbgStateChanged(DBGSTATE)), mSideBar, SLOT(debugStateChangedSlot(DBGSTATE)));
     connect(Bridge::getBridge(), SIGNAL(updateSideBar()), mSideBar, SLOT(reload()));
@@ -37,12 +41,12 @@ CPUWidget::CPUWidget(QWidget* parent) : QWidget(parent), ui(new Ui::CPUWidget)
     connect(Bridge::getBridge(), SIGNAL(focusDisasm()), this, SLOT(setDisasmFocus()));
     connect(Bridge::getBridge(), SIGNAL(focusGraph()), this, SLOT(setGraphFocus()));
 
-    mDisas->setCodeFoldingManager(mSideBar->getCodeFoldingManager());
+    mDisassembly->setCodeFoldingManager(mSideBar->getCodeFoldingManager());
 
     ui->mTopLeftUpperHSplitter->setCollapsible(0, true); //allow collapsing of the side bar
 
     ui->mTopLeftUpperLeftFrameLayout->addWidget(mSideBar);
-    ui->mTopLeftUpperRightFrameLayout->addWidget(mDisas);
+    ui->mTopLeftUpperRightFrameLayout->addWidget(mDisassembly);
     ui->mTopLeftUpperRightFrameLayout->addWidget(mGraph);
     mGraph->hide();
     disasMode = 0;
@@ -51,43 +55,42 @@ CPUWidget::CPUWidget(QWidget* parent) : QWidget(parent), ui(new Ui::CPUWidget)
     ui->mTopLeftVSplitter->setCollapsible(1, true); //allow collapsing of the InfoBox
     connect(ui->mTopLeftVSplitter, SIGNAL(splitterMoved(int, int)), this, SLOT(splitterMoved(int, int)));
 
-    mInfo = new CPUInfoBox();
+    mInfo = new CPUInfoBox(architecture);
     ui->mTopLeftLowerFrameLayout->addWidget(mInfo);
     int height = mInfo->getHeight();
     ui->mTopLeftLowerFrame->setMinimumHeight(height + 2);
 
-    connect(mDisas, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
+    connect(mDisassembly, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
 
-    mDump = new CPUMultiDump(mDisas, 5, this); //dump widget
+    mDump = new CPUMultiDump(mDisassembly, 5, this); //dump widget
     ui->mBotLeftFrameLayout->addWidget(mDump);
 
     mGeneralRegs = new CPURegistersView(this);
-    mGeneralRegs->setFixedWidth(1000);
+    mGeneralRegs->setFrameShape(QFrame::NoFrame);
     mGeneralRegs->ShowFPU(true);
-
-    QScrollArea* upperScrollArea = new QScrollArea(this);
-    upperScrollArea->setFrameShape(QFrame::NoFrame);
-    upperScrollArea->setWidget(mGeneralRegs);
-    upperScrollArea->setWidgetResizable(true);
-
-    QPushButton* button_changeview = new QPushButton("", this);
-    connect(button_changeview, SIGNAL(clicked()), mGeneralRegs, SLOT(onChangeFPUViewAction()));
-    mGeneralRegs->SetChangeButton(button_changeview);
 
     ui->mTopRightVSplitter->setCollapsible(1, true); //allow collapsing of the ArgumentWidget
     connect(ui->mTopRightVSplitter, SIGNAL(splitterMoved(int, int)), this, SLOT(splitterMoved(int, int)));
 
-    ui->mTopRightUpperFrameLayout->addWidget(button_changeview);
-    ui->mTopRightUpperFrameLayout->addWidget(upperScrollArea);
+    ui->mTopRightUpperFrameLayout->addWidget(mGeneralRegs);
+    ui->mTopHSplitter->setCollapsible(1, true); // allow collapsing of the RegisterView
 
     ui->mTopRightLowerFrameLayout->addWidget(mArgumentWidget);
 
     mStack = new CPUStack(mDump, 0); //stack widget
     ui->mBotRightFrameLayout->addWidget(mStack);
-    connect(mDisas, SIGNAL(selectionChanged(dsint)), mStack, SLOT(disasmSelectionChanged(dsint)));
+    connect(mDisassembly, SIGNAL(selectionChanged(duint)), mStack, SLOT(disasmSelectionChanged(duint)));
+
+    mDisassembly->setAccessibleName(tr("Disassembly"));
+    mStack->setAccessibleName(tr("Stack"));
+    mGeneralRegs->setAccessibleName(tr("Registers"));
+    mDump->setAccessibleName(tr("Dump"));
+    mArgumentWidget->setAccessibleName(tr("Arguments"));
+    mSideBar->setAccessibleName(tr("Sidebar"));
+    mInfo->setAccessibleName(tr("InfoBox"));
 
     // load column config
-    mDisas->loadColumnFromConfig("CPUDisassembly");
+    mDisassembly->loadColumnFromConfig("CPUDisassemblyV2");
     mStack->loadColumnFromConfig("CPUStack");
 }
 
@@ -117,6 +120,7 @@ void CPUWidget::saveWindowSettings()
     saveSplitter(ui->mTopLeftUpperHSplitter, "mTopLeftUpperHSplitter");
     saveSplitter(ui->mTopRightVSplitter, "mTopRightVSplitter");
     saveSplitter(ui->mBotHSplitter, "mBotHSplitter");
+    mDump->saveWindowSettings();
 }
 
 void CPUWidget::loadWindowSettings()
@@ -127,12 +131,18 @@ void CPUWidget::loadWindowSettings()
     loadSplitter(ui->mTopLeftUpperHSplitter, "mTopLeftUpperHSplitter");
     loadSplitter(ui->mTopRightVSplitter, "mTopRightVSplitter");
     loadSplitter(ui->mBotHSplitter, "mBotHSplitter");
+    mDump->loadWindowSettings();
 }
 
 CPUWidget::~CPUWidget()
 {
     delete mGraphWindow;
     delete ui;
+}
+
+Architecture* CPUWidget::getArchitecture() const
+{
+    return mArchitecture;
 }
 
 void CPUWidget::setDefaultDisposition()
@@ -169,18 +179,18 @@ void CPUWidget::setDisasmFocus()
     if(disasMode == 1)
     {
         mGraph->hide();
-        mDisas->show();
+        mDisassembly->show();
         mSideBar->show();
         ui->mTopLeftUpperHSplitter->restoreState(mDisasmSidebarSplitterStatus);
         disasMode = 0;
-        connect(mDisas, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
-        disconnect(mGraph, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
+        connect(mDisassembly, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
+        disconnect(mGraph, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
     }
     else if(disasMode == 2)
     {
         activateWindow();
     }
-    mDisas->setFocus();
+    mDisassembly->setFocus();
 }
 
 void CPUWidget::setGraphFocus()
@@ -188,14 +198,14 @@ void CPUWidget::setGraphFocus()
     if(disasMode == 0)
     {
         mDisasmSidebarSplitterStatus = ui->mTopLeftUpperHSplitter->saveState();
-        mDisas->hide();
+        mDisassembly->hide();
         mSideBar->hide();
         mGraph->show();
         // Hide the sidebar area
         ui->mTopLeftUpperHSplitter->setSizes(QList<int>({0, 100}));
         disasMode = 1;
-        disconnect(mDisas, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
-        connect(mGraph, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
+        disconnect(mDisassembly, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
+        connect(mGraph, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
     }
     else if(disasMode == 2)
     {
@@ -239,22 +249,23 @@ void CPUWidget::detachGraph()
 
         disasMode = 2;
 
-        mDisas->show();
+        mDisassembly->show();
         mSideBar->show();
         // restore the sidebar splitter so that the sidebar is visible
         ui->mTopLeftUpperHSplitter->restoreState(mDisasmSidebarSplitterStatus);
-        connect(mDisas, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
-        connect(mGraph, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
+        connect(mDisassembly, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
+        connect(mGraph, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
     }
 }
 
 void CPUWidget::attachGraph(QWidget* widget)
 {
+    Q_UNUSED(widget);
     mGraph->setParent(this);
     ui->mTopLeftUpperRightFrameLayout->addWidget(mGraph);
     mGraph->hide();
     mGraphWindow->close();
-    disconnect(mGraph, SIGNAL(selectionChanged(dsint)), mInfo, SLOT(disasmSelectionChanged(dsint)));
+    disconnect(mGraph, SIGNAL(selectionChanged(duint)), mInfo, SLOT(disasmSelectionChanged(duint)));
     delete mGraphWindow;
     mGraphWindow = nullptr;
     disasMode = 0;
@@ -264,9 +275,9 @@ void CPUWidget::attachGraph(QWidget* widget)
 duint CPUWidget::getSelectionVa()
 {
     if(disasMode < 2)
-        return disasMode == 0 ? mDisas->getSelectedVa() : mGraph->get_cursor_pos();
+        return disasMode == 0 ? mDisassembly->getSelectedVa() : mGraph->get_cursor_pos();
     else
-        return !mGraph->hasFocus() ? mDisas->getSelectedVa() : mGraph->get_cursor_pos();
+        return !mGraph->hasFocus() ? mDisassembly->getSelectedVa() : mGraph->get_cursor_pos();
 }
 
 CPUSideBar* CPUWidget::getSidebarWidget()
@@ -276,7 +287,7 @@ CPUSideBar* CPUWidget::getSidebarWidget()
 
 CPUDisassembly* CPUWidget::getDisasmWidget()
 {
-    return mDisas;
+    return mDisassembly;
 }
 
 DisassemblerGraphView* CPUWidget::getGraphWidget()

@@ -1,27 +1,32 @@
-#ifndef CALLSTACKVIEW_H
-#define CALLSTACKVIEW_H
+#pragma once
 
-#include "StdTable.h"
+#include "StdIconTable.h"
 class CommonActions;
 
-class CallStackView : public StdTable
+class CallStackView : public StdIconTable
 {
     Q_OBJECT
 public:
-    explicit CallStackView(StdTable* parent = 0);
+    explicit CallStackView(StdTable* parent = nullptr);
     void setupContextMenu();
     duint getSelectionVa();
 
 protected:
-    QString paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h) override;
+    QString paintContent(QPainter* painter, duint row, duint col, int x, int y, int w, int h) override;
 
 protected slots:
-    void updateCallStack();
+    void updateCallStackSlot();
     void contextMenuSlot(const QPoint pos);
-    void followAddress();
-    void followTo();
-    void followFrom();
-    void showSuspectedCallStack();
+    void followAddressSlot();
+    void followToSlot();
+    void followFromSlot();
+    void showSuspectedCallStackSlot();
+    void followInThreadsSlot();
+    void renameThreadSlot();
+    void loadSymbolsForThreadSlot();
+    void highlightByModuleSlot();
+    void highlightBySymbolSlot();
+    void clearHighlightSlot();
 
 private:
     enum
@@ -31,13 +36,24 @@ private:
         ColTo,
         ColFrom,
         ColSize,
-        ColComment,
-        ColParty
+        ColParty,
+        ColComment
     };
+
+    enum HighlightMode
+    {
+        HighlightNone,
+        HighlightModule,
+        HighlightSymbol
+    };
+
+    HighlightMode mHighlightMode;
+    QString mHighlightKey;
 
     MenuBuilder* mMenuBuilder;
     CommonActions* mCommonActions;
     bool isSelectionValid();
+    bool isThreadHeaderSelected();
+    bool rowMatchesHighlight(duint row);
+    void switchThread();
 };
-
-#endif // CALLSTACKVIEW_H

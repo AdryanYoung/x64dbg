@@ -1,5 +1,4 @@
-#ifndef SHORTCUTEDIT_H
-#define SHORTCUTEDIT_H
+#pragma once
 
 #include <QLineEdit>
 #include <QKeySequence>
@@ -13,7 +12,7 @@ class ShortcutEdit : public QLineEdit
     bool mError;
 
 public:
-    explicit ShortcutEdit(QWidget* parent = 0);
+    explicit ShortcutEdit(QWidget* parent = nullptr);
     const QKeySequence getKeysequence() const;
     bool error() const;
 
@@ -26,5 +25,3 @@ signals:
 protected:
     void keyPressEvent(QKeyEvent* event);
 };
-
-#endif // SHORTCUTEDIT_H

@@ -1,5 +1,4 @@
-#ifndef COMMONACTIONS_H
-#define COMMONACTIONS_H
+#pragma once
 
 #include <QAction>
 #include <functional>
@@ -39,9 +38,10 @@ public:
         ActionFindrefMore = 1 << 22, // Find references (submenu)
         ActionXref = 1 << 23, // Xref
         ActionXrefMore = 1 << 24, // Xref (submenu)
-        ActionNewOrigin = 1 << 25, // Set New Origin Here
+        ActionNewOrigin = 1 << 25, // Set EIP/RIP Here
         ActionNewThread = 1 << 26, // Create New Thread Here
-        ActionWatch = 1 << 27 // Watch DWORD
+        ActionWatch = 1 << 27, // Watch DWORD
+        ActionDisplayType = 1 << 28, // Display type
     } CommonActionsList;
 
     using GetSelectionFunc = std::function<duint()>;
@@ -53,6 +53,8 @@ public:
 
     QAction* makeCommandAction(const QIcon & icon, const QString & text, const char* cmd, const char* shortcut);
     QAction* makeCommandAction(const QIcon & icon, const QString & text, const char* cmd);
+    QAction* makeCommandDescAction(const QIcon & icon, const QString & text, const QString & description, const char* cmd);
+    QAction* makeCommandDescAction(const QIcon & icon, const QString & text, const QString & description, const char* cmd, const char* shortcut);
 public slots:
     void followDisassemblySlot();
     void setLabelSlot();
@@ -69,13 +71,12 @@ public slots:
     void setHwBpAt(duint va, int slot);
 
     void graphSlot();
+    void displayTypeSlot();
     void setNewOriginHereActionSlot();
     void createThreadSlot();
 private:
     GetSelectionFunc mGetSelection;
-    bool WarningBoxNotExecutable(const QString & text, duint wVA);
-    QWidget* widgetparent();
+    bool WarningBoxNotExecutable(const QString & text, duint va) const;
+    QWidget* widgetparent() const;
+    class GotoDialog* mGotoType = nullptr;
 };
-
-
-#endif //COMMONACTIONS_H

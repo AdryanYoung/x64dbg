@@ -1,5 +1,4 @@
-#ifndef XREFBROWSEDIALOG_H
-#define XREFBROWSEDIALOG_H
+#pragma once
 
 #include "Bridge.h"
 #include "ActionHelpers.h"
@@ -54,7 +53,7 @@ private:
 
     void changeAddress(duint address);
     void setupContextMenu();
-    QString GetFunctionSymbol(duint addr);
+    static QString GetFunctionSymbol(duint addr);
 
     XREF_INFO mXrefInfo;
     duint mAddress;
@@ -62,5 +61,3 @@ private:
     MenuBuilder* mMenu;
     GotoFunction mGotoFunction;
 };
-
-#endif // XREFBROWSEDIALOG_H

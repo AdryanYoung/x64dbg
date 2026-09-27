@@ -13,30 +13,78 @@
 
 CPURegistersView::CPURegistersView(CPUWidget* parent) : RegistersView(parent), mParent(parent)
 {
-    // precreate ContextMenu Actions
-    wCM_Modify = new QAction(DIcon("register_edit.png"), tr("Modify value"), this);
-    wCM_Modify->setShortcut(QKeySequence(Qt::Key_Enter));
-    wCM_ToggleValue = setupAction(DIcon("register_toggle.png"), tr("Toggle"));
-    wCM_Undo = setupAction(DIcon("undo.png"), tr("Undo"));
-    wCM_FollowInDisassembly = new QAction(DIcon(QString("processor%1.png").arg(ArchValue("32", "64"))), tr("Follow in Disassembler"), this);
-    wCM_FollowInDump = new QAction(DIcon("dump.png"), tr("Follow in Dump"), this);
-    wCM_FollowInStack = new QAction(DIcon("stack.png"), tr("Follow in Stack"), this);
-    wCM_FollowInMemoryMap = new QAction(DIcon("memmap_find_address_page"), tr("Follow in Memory Map"), this);
-    wCM_RemoveHardware = new QAction(DIcon("breakpoint_remove.png"), tr("&Remove hardware breakpoint"), this);
-    wCM_Incrementx87Stack = setupAction(DIcon("arrow-small-down.png"), tr("Increment x87 Stack"));
-    wCM_Decrementx87Stack = setupAction(DIcon("arrow-small-up.png"), tr("Decrement x87 Stack"));
-    wCM_Highlight = setupAction(DIcon("highlight.png"), tr("Highlight"));
     // foreign messages
     connect(Bridge::getBridge(), SIGNAL(updateRegisters()), this, SLOT(updateRegistersSlot()));
     connect(this, SIGNAL(customContextMenuRequested(QPoint)), this, SLOT(displayCustomContextMenuSlot(QPoint)));
     connect(Bridge::getBridge(), SIGNAL(dbgStateChanged(DBGSTATE)), this, SLOT(debugStateChangedSlot(DBGSTATE)));
-    connect(parent->getDisasmWidget(), SIGNAL(selectionChanged(dsint)), this, SLOT(disasmSelectionChangedSlot(dsint)));
+    connect(parent->getDisasmWidget(), SIGNAL(selectionChanged(duint)), this, SLOT(disasmSelectionChangedSlot(duint)));
+    connect(Config(), SIGNAL(shortcutsUpdated()), this, SLOT(refreshShortcutsSlot()));
+
+    setupContextMenu();
+
+    wCM_ToggleValue->setShortcutContext(Qt::WidgetShortcut);
+    this->addAction(wCM_ToggleValue);
+    wCM_Highlight->setShortcutContext(Qt::WidgetShortcut);
+    this->addAction(wCM_Highlight);
+    wCM_Incrementx87Stack->setShortcutContext(Qt::WidgetShortcut);
+    this->addAction(wCM_Incrementx87Stack);
+    wCM_Decrementx87Stack->setShortcutContext(Qt::WidgetShortcut);
+    this->addAction(wCM_Decrementx87Stack);
+    wCM_FollowInDump->setShortcutContext(Qt::WidgetShortcut);
+    this->addAction(wCM_FollowInDump);
+    wCM_FollowInStack->setShortcutContext(Qt::WidgetShortcut);
+    this->addAction(wCM_FollowInStack);
+
+    refreshShortcutsSlot();
+}
+
+void CPURegistersView::setupContextMenu()
+{
+    mMenuBuilder = new MenuBuilder(this, [](QMenu*)
+    {
+        return DbgIsDebugging();
+    });
+
+    mCommonActions = new CommonActions(this, getActionHelperFuncs(), [this]() -> duint
+    {
+        if(mCANSTOREADDRESS.contains(mSelected))
+        {
+            return *(duint*)registerValue(&mRegDumpStruct, mSelected);
+        }
+        return 0;
+    });
+
+    // precreate ContextMenu Actions
+    wCM_Modify = new QAction(DIcon("register_edit"), tr("Modify value"), this);
+    wCM_Modify->setShortcut(QKeySequence(Qt::Key_Enter));
+    wCM_Increment = new QAction(DIcon("register_inc"), tr("Increment value"), this);
+    wCM_Increment->setShortcut(QKeySequence(Qt::Key_Plus));
+    wCM_Decrement = new QAction(DIcon("register_dec"), tr("Decrement value"), this);
+    wCM_Decrement->setShortcut(QKeySequence(Qt::Key_Minus));
+    wCM_Zero = new QAction(DIcon("register_zero"), tr("Zero value"), this);
+    wCM_Zero->setShortcut(QKeySequence(Qt::Key_0));
+    wCM_ToggleValue = setupAction(DIcon("register_toggle"), tr("Toggle"));
+    wCM_Undo = setupAction(DIcon("undo"), tr("Undo"));
+    wCM_CopyPrevious = setupAction(DIcon("undo"), "");
+    wCM_FollowInDisassembly = new QAction(DIcon(QString("processor%1").arg(ArchValue("32", "64"))), tr("Follow in Disassembler"), this);
+    wCM_FollowInDump = new QAction(DIcon("dump"), tr("Follow in Dump"), this);
+    wCM_FollowInStack = new QAction(DIcon("stack"), tr("Follow in Stack"), this);
+    wCM_FollowInMemoryMap = new QAction(DIcon("memmap_find_address_page"), tr("Follow in Memory Map"), this);
+    wCM_RemoveHardware = new QAction(DIcon("breakpoint_remove"), tr("&Remove hardware breakpoint"), this);
+    wCM_Incrementx87Stack = setupAction(DIcon("arrow-small-down"), tr("Increment x87 Stack"));
+    wCM_Decrementx87Stack = setupAction(DIcon("arrow-small-up"), tr("Decrement x87 Stack"));
+    wCM_Highlight = setupAction(DIcon("highlight"), tr("Highlight"));
+
     // context menu actions
     connect(wCM_Incrementx87Stack, SIGNAL(triggered()), this, SLOT(onIncrementx87StackAction()));
     connect(wCM_Decrementx87Stack, SIGNAL(triggered()), this, SLOT(onDecrementx87StackAction()));
     connect(wCM_Modify, SIGNAL(triggered()), this, SLOT(onModifyAction()));
+    connect(wCM_Increment, SIGNAL(triggered()), this, SLOT(onIncrementAction()));
+    connect(wCM_Decrement, SIGNAL(triggered()), this, SLOT(onDecrementAction()));
+    connect(wCM_Zero, SIGNAL(triggered()), this, SLOT(onZeroAction()));
     connect(wCM_ToggleValue, SIGNAL(triggered()), this, SLOT(onToggleValueAction()));
     connect(wCM_Undo, SIGNAL(triggered()), this, SLOT(onUndoAction()));
+    connect(wCM_CopyPrevious, SIGNAL(triggered()), this, SLOT(onCopyPreviousAction()));
     connect(wCM_FollowInDisassembly, SIGNAL(triggered()), this, SLOT(onFollowInDisassembly()));
     connect(wCM_FollowInDump, SIGNAL(triggered()), this, SLOT(onFollowInDump()));
     connect(wCM_FollowInStack, SIGNAL(triggered()), this, SLOT(onFollowInStack()));
@@ -44,8 +92,8 @@ CPURegistersView::CPURegistersView(CPUWidget* parent) : RegistersView(parent), m
     connect(wCM_RemoveHardware, SIGNAL(triggered()), this, SLOT(onRemoveHardware()));
     connect(wCM_Highlight, SIGNAL(triggered()), this, SLOT(onHighlightSlot()));
 
-    refreshShortcutsSlot();
-    connect(Config(), SIGNAL(shortcutsUpdated()), this, SLOT(refreshShortcutsSlot()));
+    // TODO: port all the menus to MenuBuilder
+    mCommonActions->build(mMenuBuilder, CommonActions::ActionDisplayType);
 }
 
 void CPURegistersView::refreshShortcutsSlot()
@@ -54,6 +102,8 @@ void CPURegistersView::refreshShortcutsSlot()
     wCM_Highlight->setShortcut(ConfigShortcut("ActionHighlightingMode"));
     wCM_Incrementx87Stack->setShortcut(ConfigShortcut("ActionIncrementx87Stack"));
     wCM_Decrementx87Stack->setShortcut(ConfigShortcut("ActionDecrementx87Stack"));
+    wCM_FollowInDump->setShortcut(ConfigShortcut("ActionFollowDwordQwordDump"));
+    wCM_FollowInStack->setShortcut(ConfigShortcut("ActionFollowStack"));
     RegistersView::refreshShortcutsSlot();
 }
 
@@ -85,8 +135,6 @@ void CPURegistersView::mousePressEvent(QMouseEvent* event)
                     CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::MmxRegister, mRegisterMapping.constFind(r).value()));
                 else if(mFPUXMM.contains(r))
                     CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::XmmRegister, mRegisterMapping.constFind(r).value()));
-                else if(mFPUYMM.contains(r))
-                    CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::YmmRegister, mRegisterMapping.constFind(r).value()));
                 else if(mSEGMENTREGISTER.contains(r))
                     CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::MemorySegment, mRegisterMapping.constFind(r).value()));
                 else
@@ -97,7 +145,10 @@ void CPURegistersView::mousePressEvent(QMouseEvent* event)
             emit refresh();
         }
         else
+        {
             mSelected = UNKNOWN;
+        }
+        accessibilitySelectionChanged();
     }
 }
 
@@ -112,21 +163,29 @@ void CPURegistersView::mouseDoubleClickEvent(QMouseEvent* event)
     // do we find a corresponding register?
     if(!identifyRegister(y, x, 0))
         return;
-    if(mSelected == CIP) //double clicked on CIP register
+    if(mSelected == CIP) //double clicked on CIP register, disasm CIP
         DbgCmdExec("disasm cip");
     // is current register general purposes register or FPU register?
     else if(mMODIFYDISPLAY.contains(mSelected))
         wCM_Modify->trigger();
     else if(mBOOLDISPLAY.contains(mSelected)) // is flag ?
-        wCM_ToggleValue->trigger();
+        wCM_ToggleValue->trigger(); //toggle flag value
     else if(mCANSTOREADDRESS.contains(mSelected))
-        wCM_FollowInDisassembly->trigger();
+        wCM_FollowInDisassembly->trigger(); //follow in disassembly
+    else if(mSelected == ArchValue(FS, GS)) // double click on FS or GS, follow TEB in dump
+        DbgCmdExec("dump teb()");
 }
 
 void CPURegistersView::keyPressEvent(QKeyEvent* event)
 {
     if(isActive && (event->key() == Qt::Key_Enter || event->key() == Qt::Key_Return))
         wCM_Modify->trigger();
+    else if(isActive && (event->key() == Qt::Key_Plus))
+        wCM_Increment->trigger();
+    else if(isActive && (event->key() == Qt::Key_Minus))
+        wCM_Decrement->trigger();
+    else if(isActive && (event->key() == Qt::Key_0))
+        wCM_Zero->trigger();
     else
         RegistersView::keyPressEvent(event);
 }
@@ -135,8 +194,10 @@ void CPURegistersView::debugStateChangedSlot(DBGSTATE state)
 {
     if(state == stopped)
     {
-        updateRegistersSlot();
         isActive = false;
+        mSelected = UNKNOWN;
+        mRegisterUpdates.clear();
+        reload();
     }
     else
     {
@@ -146,11 +207,23 @@ void CPURegistersView::debugStateChangedSlot(DBGSTATE state)
 
 void CPURegistersView::updateRegistersSlot()
 {
+    // DbgGetRegDumpEx returns a zeroed dump when the debugger is inactive.
+    if(!DbgIsDebugging())
+    {
+        isActive = false;
+        mSelected = UNKNOWN;
+        mRegisterUpdates.clear();
+        reload();
+        return;
+    }
+
     // read registers
-    REGDUMP z;
-    DbgGetRegDumpEx(&z, sizeof(REGDUMP));
-    // update gui
-    setRegisters(&z);
+    REGDUMP_AVX512 z;
+    if(DbgGetRegDumpEx(&z, sizeof(z)))
+    {
+        // update gui
+        setRegisters(&z);
+    }
 }
 
 void CPURegistersView::ModifyFields(const QString & title, STRING_VALUE_TABLE_t* table, SIZE_T size)
@@ -206,7 +279,7 @@ static void editSIMDRegister(CPURegistersView* parent, int bits, const QString &
     mEditFloat.show();
     mEditFloat.selectAllText();
     if(mEditFloat.exec() == QDialog::Accepted)
-        parent->setRegister(mSelected, (duint)mEditFloat.getData());
+        parent->setRegisterData(mSelected, mEditFloat.getData(), bits / 8);
 }
 
 /**
@@ -216,9 +289,42 @@ static void editSIMDRegister(CPURegistersView* parent, int bits, const QString &
 
 void CPURegistersView::displayEditDialog()
 {
+    QString name = mRegisterMapping[mSelected];
+    // change the name from XMM to YMM and ZMM depending on mXMMMode
+    if(mSelected >= XMM0 && mSelected <= ArchValue(XMM7, XMM31))
+    {
+        if(mXMMMode == 1)
+        {
+            name[0] = 'Y';
+        }
+        else if(mXMMMode == 2)
+        {
+            name[0] = 'Z';
+        }
+    }
     if(mFPU.contains(mSelected))
     {
-        if(mTAGWORD.contains(mSelected))
+        if(!isAVX512Supported())
+        {
+            if(mFPUOpmask.contains(mSelected)
+#ifdef _WIN64
+                    || mSelected >= XMM16 && mSelected <= XMM31
+#endif //_WIN64
+              )
+            {
+                SimpleErrorBox(this, tr("Error"), RegistersView::tr("AVX-512 isn't supported on this computer.\n").trimmed());
+                return;
+            }
+        }
+        if(mSelected == x87TagWord || mSelected == x87StatusWord || mSelected == x87ControlWord || mSelected == MxCsr)
+        {
+            WordEditDialog editDialog(this);
+            auto value = *(duint*)registerValue(&mRegDumpStruct, mSelected);
+            editDialog.setup(tr("Edit %1").arg(name), value, mSelected == x87ControlWord ? sizeof(uint32_t) : sizeof(uint16_t));
+            if(editDialog.exec() == QDialog::Accepted) //OK button clicked
+                setRegister(mSelected, editDialog.getVal());
+        }
+        else if(mTAGWORD.contains(mSelected))
             MODIFY_FIELDS_DISPLAY(tr("Edit"), "Tag " + mRegisterMapping.constFind(mSelected).value(), TagWordValueStringTable);
         else if(mSelected == MxCsr_RC)
             MODIFY_FIELDS_DISPLAY(tr("Edit"), "MxCsr_RC", MxCsrRCValueStringTable);
@@ -232,20 +338,20 @@ void CPURegistersView::displayEditDialog()
             // if(mFpuMode == false)
             updateRegistersSlot();
         }
-        else if(mFPUYMM.contains(mSelected))
-            editSIMDRegister(this, 256, tr("Edit YMM register"), registerValue(&wRegDumpStruct, mSelected), mSelected);
         else if(mFPUXMM.contains(mSelected))
-            editSIMDRegister(this, 128, tr("Edit XMM register"), registerValue(&wRegDumpStruct, mSelected), mSelected);
+        {
+            editSIMDRegister(this, GetSizeRegister(mSelected) * 8, tr("Edit %1 register").arg(name), registerValue(&mRegDumpStruct, mSelected), mSelected);
+        }
         else if(mFPUMMX.contains(mSelected))
-            editSIMDRegister(this, 64, tr("Edit MMX register"), registerValue(&wRegDumpStruct, mSelected), mSelected);
+            editSIMDRegister(this, 64, tr("Edit %1 register").arg(name), registerValue(&mRegDumpStruct, mSelected), mSelected);
         else
         {
             bool errorinput = false;
             LineEditDialog mLineEdit(this);
 
-            mLineEdit.setText(GetRegStringValueFromValue(mSelected,  registerValue(&wRegDumpStruct, mSelected)));
+            mLineEdit.setText(GetRegStringValueFromValue(mSelected,  registerValue(&mRegDumpStruct, mSelected)));
             mLineEdit.setWindowTitle(tr("Edit FPU register"));
-            mLineEdit.setWindowIcon(DIcon("log.png"));
+            mLineEdit.setWindowIcon(DIcon("log"));
             mLineEdit.setCursorPosition(0);
             auto sizeRegister = int(GetSizeRegister(mSelected));
             if(sizeRegister == 10)
@@ -267,6 +373,19 @@ void CPURegistersView::displayEditDialog()
                         fpuvalue = (duint) mLineEdit.editText.toUShort(&ok, 16);
                     else if(mDWORDDISPLAY.contains(mSelected))
                         fpuvalue = mLineEdit.editText.toUInt(&ok, 16);
+                    else if(mFPUOpmask.contains(mSelected))
+                    {
+                        ULONGLONG newopmaskvalue = mLineEdit.editText.toULongLong(&ok, 16);
+                        if(!ok)
+                        {
+                            errorinput = true;
+                        }
+                        else
+                        {
+                            setRegisterData(mSelected, &newopmaskvalue, sizeof(newopmaskvalue));
+                            return;
+                        }
+                    }
                     else if(mFPUx87_80BITSDISPLAY.contains(mSelected))
                     {
                         QString editTextLower = mLineEdit.editText.toLower();
@@ -275,7 +394,7 @@ void CPURegistersView::displayEditDialog()
                         {
                             char number[10];
                             str2ld(mLineEdit.editText.toUtf8().constData(), number);
-                            setRegister(mSelected, reinterpret_cast<duint>(number));
+                            setRegisterData(mSelected, number, sizeof(number));
                             return;
                         }
                         else
@@ -307,10 +426,10 @@ void CPURegistersView::displayEditDialog()
                                         if(!ConfigBool("Gui", "FpuRegistersLittleEndian")) // reverse byte order if it is big-endian
                                         {
                                             pArray = ByteReverse(QByteArray(pData, sizeRegister));
-                                            setRegister(mSelected, reinterpret_cast<duint>(pArray.constData()));
+                                            setRegisterData(mSelected, pArray.constData(), sizeRegister);
                                         }
                                         else
-                                            setRegister(mSelected, reinterpret_cast<duint>(pData));
+                                            setRegisterData(mSelected, pData, sizeRegister);
                                     }
 
                                     free(pData);
@@ -338,7 +457,7 @@ void CPURegistersView::displayEditDialog()
     {
         bool errorinput = false;
         LineEditDialog mLineEdit(this);
-        LASTERROR* error = (LASTERROR*)registerValue(&wRegDumpStruct, LastError);
+        LASTERROR* error = (LASTERROR*)registerValue(&mRegDumpStruct, LastError);
         mLineEdit.setText(QString::number(error->code, 16));
         mLineEdit.setWindowTitle(tr("Set Last Error"));
         mLineEdit.setCursorPosition(0);
@@ -359,7 +478,7 @@ void CPURegistersView::displayEditDialog()
     {
         bool statusinput = false;
         LineEditDialog mLineEdit(this);
-        LASTSTATUS* status = (LASTSTATUS*)registerValue(&wRegDumpStruct, LastStatus);
+        LASTSTATUS* status = (LASTSTATUS*)registerValue(&mRegDumpStruct, LastStatus);
         mLineEdit.setText(QString::number(status->code, 16));
         mLineEdit.setWindowTitle(tr("Set Last Status"));
         mLineEdit.setCursorPosition(0);
@@ -378,10 +497,11 @@ void CPURegistersView::displayEditDialog()
     }
     else
     {
-        WordEditDialog wEditDial(this);
-        wEditDial.setup(tr("Edit"), (* ((duint*) registerValue(&wRegDumpStruct, mSelected))), sizeof(dsint));
-        if(wEditDial.exec() == QDialog::Accepted) //OK button clicked
-            setRegister(mSelected, wEditDial.getVal());
+        WordEditDialog editDialog(this);
+        auto value = *(duint*)registerValue(&mRegDumpStruct, mSelected);
+        editDialog.setup(tr("Edit %1").arg(name), value, sizeof(dsint));
+        if(editDialog.exec() == QDialog::Accepted) //OK button clicked
+            setRegister(mSelected, editDialog.getVal());
     }
 }
 
@@ -389,7 +509,7 @@ void CPURegistersView::CreateDumpNMenu(QMenu* dumpMenu)
 {
     QList<QString> names;
     CPUMultiDump* multiDump = mParent->getDumpWidget();
-    dumpMenu->setIcon(DIcon("dump.png"));
+    dumpMenu->setIcon(DIcon("dump"));
     int maxDumps = multiDump->getMaxCPUTabs();
     multiDump->getTabNames(names);
     for(int i = 0; i < maxDumps; i++)
@@ -404,13 +524,13 @@ void CPURegistersView::CreateDumpNMenu(QMenu* dumpMenu)
 void CPURegistersView::onIncrementx87StackAction()
 {
     if(mFPUx87_80BITSDISPLAY.contains(mSelected))
-        setRegister(x87SW_TOP, ((* ((duint*) registerValue(&wRegDumpStruct, x87SW_TOP))) + 1) % 8);
+        setRegister(x87SW_TOP, ((* ((duint*) registerValue(&mRegDumpStruct, x87SW_TOP))) + 1) % 8);
 }
 
 void CPURegistersView::onDecrementx87StackAction()
 {
     if(mFPUx87_80BITSDISPLAY.contains(mSelected))
-        setRegister(x87SW_TOP, ((* ((duint*) registerValue(&wRegDumpStruct, x87SW_TOP))) - 1) % 8);
+        setRegister(x87SW_TOP, ((* ((duint*) registerValue(&mRegDumpStruct, x87SW_TOP))) - 1) % 8);
 }
 
 void CPURegistersView::onModifyAction()
@@ -419,11 +539,35 @@ void CPURegistersView::onModifyAction()
         displayEditDialog();
 }
 
+void CPURegistersView::onIncrementAction()
+{
+    if(mINCREMENTDECREMET.contains(mSelected))
+    {
+        duint value = *((duint*) registerValue(&mRegDumpStruct, mSelected));
+        setRegister(mSelected, value + 1);
+    }
+}
+
+void CPURegistersView::onDecrementAction()
+{
+    if(mINCREMENTDECREMET.contains(mSelected))
+    {
+        duint value = *((duint*) registerValue(&mRegDumpStruct, mSelected));
+        setRegister(mSelected, value - 1);
+    }
+}
+
+void CPURegistersView::onZeroAction()
+{
+    if(mINCREMENTDECREMET.contains(mSelected))
+        setRegister(mSelected, 0);
+}
+
 void CPURegistersView::onToggleValueAction()
 {
     if(mBOOLDISPLAY.contains(mSelected))
     {
-        int value = (int)(* (bool*) registerValue(&wRegDumpStruct, mSelected));
+        int value = (int)(* (bool*) registerValue(&mRegDumpStruct, mSelected));
         setRegister(mSelected, value ^ 1);
     }
 }
@@ -432,11 +576,16 @@ void CPURegistersView::onUndoAction()
 {
     if(mUNDODISPLAY.contains(mSelected))
     {
-        if(mFPUMMX.contains(mSelected) || mFPUXMM.contains(mSelected) || mFPUYMM.contains(mSelected) || mFPUx87_80BITSDISPLAY.contains(mSelected))
-            setRegister(mSelected, (duint)registerValue(&wCipRegDumpStruct, mSelected));
+        if(mFPUMMX.contains(mSelected) || mFPUXMM.contains(mSelected) || mFPUOpmask.contains(mSelected) || mFPUx87_80BITSDISPLAY.contains(mSelected))
+            setRegister(mSelected, (duint)registerValue(&mCipRegDumpStruct, mSelected));
         else
-            setRegister(mSelected, *(duint*)registerValue(&wCipRegDumpStruct, mSelected));
+            setRegister(mSelected, *(duint*)registerValue(&mCipRegDumpStruct, mSelected));
     }
+}
+
+void CPURegistersView::onCopyPreviousAction()
+{
+    Bridge::CopyToClipboard(wCM_CopyPrevious->data().toString());
 }
 
 void CPURegistersView::onHighlightSlot()
@@ -450,8 +599,8 @@ void CPURegistersView::onHighlightSlot()
         CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::MmxRegister, mRegisterMapping.constFind(mSelected).value()));
     else if(mFPUXMM.contains(mSelected))
         CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::XmmRegister, mRegisterMapping.constFind(mSelected).value()));
-    else if(mFPUYMM.contains(mSelected))
-        CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::YmmRegister, mRegisterMapping.constFind(mSelected).value()));
+    else if(mFPUOpmask.contains(mSelected))
+        CPUDisassemblyView->hightlightToken(ZydisTokenizer::SingleToken(ZydisTokenizer::TokenType::ZmmRegister, mRegisterMapping.constFind(mSelected).value()));
     CPUDisassemblyView->reloadData();
 }
 
@@ -459,8 +608,8 @@ void CPURegistersView::onFollowInDisassembly()
 {
     if(mCANSTOREADDRESS.contains(mSelected))
     {
-        QString addr = QString("%1").arg((* ((duint*) registerValue(&wRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
-        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&wRegDumpStruct, mSelected)))))
+        QString addr = QString("%1").arg((* ((duint*) registerValue(&mRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
+        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&mRegDumpStruct, mSelected)))))
             DbgCmdExec(QString().sprintf("disasm \"%s\"", addr.toUtf8().constData()));
     }
 }
@@ -469,8 +618,8 @@ void CPURegistersView::onFollowInDump()
 {
     if(mCANSTOREADDRESS.contains(mSelected))
     {
-        QString addr = QString("%1").arg((* ((duint*) registerValue(&wRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
-        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&wRegDumpStruct, mSelected)))))
+        QString addr = QString("%1").arg((* ((duint*) registerValue(&mRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
+        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&mRegDumpStruct, mSelected)))))
             DbgCmdExec(QString().sprintf("dump \"%s\"", addr.toUtf8().constData()));
     }
 }
@@ -479,8 +628,8 @@ void CPURegistersView::onFollowInDumpN()
 {
     if(mCANSTOREADDRESS.contains(mSelected))
     {
-        QString addr = QString("%1").arg((* ((duint*) registerValue(&wRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
-        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&wRegDumpStruct, mSelected)))))
+        QString addr = QString("%1").arg((* ((duint*) registerValue(&mRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
+        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&mRegDumpStruct, mSelected)))))
         {
             QAction* action = qobject_cast<QAction*>(sender());
             int numDump = action->data().toInt();
@@ -493,8 +642,8 @@ void CPURegistersView::onFollowInStack()
 {
     if(mCANSTOREADDRESS.contains(mSelected))
     {
-        QString addr = QString("%1").arg((* ((duint*) registerValue(&wRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
-        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&wRegDumpStruct, mSelected)))))
+        QString addr = QString("%1").arg((* ((duint*) registerValue(&mRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
+        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&mRegDumpStruct, mSelected)))))
             DbgCmdExec(QString().sprintf("sdump \"%s\"", addr.toUtf8().constData()));
     }
 }
@@ -503,8 +652,8 @@ void CPURegistersView::onFollowInMemoryMap()
 {
     if(mCANSTOREADDRESS.contains(mSelected))
     {
-        QString addr = QString("%1").arg((* ((duint*) registerValue(&wRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
-        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&wRegDumpStruct, mSelected)))))
+        QString addr = QString("%1").arg((* ((duint*) registerValue(&mRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
+        if(DbgMemIsValidReadPtr((* ((duint*) registerValue(&mRegDumpStruct, mSelected)))))
             DbgCmdExec(QString().sprintf("memmapdump \"%s\"", addr.toUtf8().constData()));
     }
 }
@@ -513,7 +662,7 @@ void CPURegistersView::onRemoveHardware()
 {
     if(mSelected == DR0 || mSelected == DR1 || mSelected == DR2 || mSelected == DR3)
     {
-        QString addr = QString("%1").arg((* ((duint*) registerValue(&wRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
+        QString addr = QString("%1").arg((* ((duint*) registerValue(&mRegDumpStruct, mSelected))), mRegisterPlaces[mSelected].valuesize, 16, QChar('0')).toUpper();
         DbgCmdExec(QString().sprintf("bphc \"%s\"", addr.toUtf8().constData()));
     }
 }
@@ -522,7 +671,7 @@ void CPURegistersView::displayCustomContextMenuSlot(QPoint pos)
 {
     if(!isActive)
         return;
-    QMenu wMenu(this);
+    QMenu menu(this);
     QMenu* followInDumpNMenu = nullptr;
     setupSIMDModeMenu();
 
@@ -530,136 +679,166 @@ void CPURegistersView::displayCustomContextMenuSlot(QPoint pos)
     {
         if(mMODIFYDISPLAY.contains(mSelected))
         {
-            wMenu.addAction(wCM_Modify);
+            menu.addAction(wCM_Modify);
+        }
+
+        if(mINCREMENTDECREMET.contains(mSelected))
+        {
+            menu.addAction(wCM_Increment);
+            menu.addAction(wCM_Decrement);
+            menu.addAction(wCM_Zero);
         }
 
         if(mCANSTOREADDRESS.contains(mSelected))
         {
-            duint addr = (* ((duint*) registerValue(&wRegDumpStruct, mSelected)));
+            duint addr = (* ((duint*) registerValue(&mRegDumpStruct, mSelected)));
             if(DbgMemIsValidReadPtr(addr))
             {
-                wMenu.addAction(wCM_FollowInDump);
-                followInDumpNMenu = new QMenu(tr("Follow in &Dump"), &wMenu);
+                menu.addAction(wCM_FollowInDump);
+                followInDumpNMenu = new QMenu(tr("Follow in &Dump"), &menu);
                 CreateDumpNMenu(followInDumpNMenu);
-                wMenu.addMenu(followInDumpNMenu);
-                wMenu.addAction(wCM_FollowInDisassembly);
-                wMenu.addAction(wCM_FollowInMemoryMap);
+                menu.addMenu(followInDumpNMenu);
+                menu.addAction(wCM_FollowInDisassembly);
+                menu.addAction(wCM_FollowInMemoryMap);
+                // TODO: port everything to the MenuBuilder pattern
+                mMenuBuilder->build(&menu);
                 duint size = 0;
                 duint base = DbgMemFindBaseAddr(DbgValFromString("csp"), &size);
                 if(addr >= base && addr < base + size)
-                    wMenu.addAction(wCM_FollowInStack);
+                    menu.addAction(wCM_FollowInStack);
             }
         }
 
         if(mSelected == DR0 || mSelected == DR1 || mSelected == DR2 || mSelected == DR3)
         {
-            if(* ((duint*) registerValue(&wRegDumpStruct, mSelected)) != 0)
-                wMenu.addAction(wCM_RemoveHardware);
+            if(* ((duint*) registerValue(&mRegDumpStruct, mSelected)) != 0)
+                menu.addAction(wCM_RemoveHardware);
         }
 
-        wMenu.addAction(wCM_CopyToClipboard);
+        menu.addAction(wCM_CopyToClipboard);
         if(mFPUx87_80BITSDISPLAY.contains(mSelected))
         {
-            wMenu.addAction(wCM_CopyFloatingPointValueToClipboard);
+            menu.addAction(wCM_CopyFloatingPointValueToClipboard);
         }
         if(mLABELDISPLAY.contains(mSelected))
         {
             QString symbol = getRegisterLabel(mSelected);
             if(symbol != "")
-                wMenu.addAction(wCM_CopySymbolToClipboard);
+                menu.addAction(wCM_CopySymbolToClipboard);
         }
-        wMenu.addAction(wCM_CopyAll);
+        menu.addAction(wCM_CopyAll);
 
-        if((mGPR.contains(mSelected) && mSelected != REGISTER_NAME::EFLAGS) || mSEGMENTREGISTER.contains(mSelected) || mFPUMMX.contains(mSelected) || mFPUXMM.contains(mSelected) || mFPUYMM.contains(mSelected))
+        if((mGPR.contains(mSelected) && mSelected != REGISTER_NAME::EFLAGS) || mSEGMENTREGISTER.contains(mSelected) || mFPUMMX.contains(mSelected) || mFPUXMM.contains(mSelected) || mFPUOpmask.contains(mSelected))
         {
-            wMenu.addAction(wCM_Highlight);
+            menu.addAction(wCM_Highlight);
         }
 
-        if(mUNDODISPLAY.contains(mSelected) && CompareRegisters(mSelected, &wRegDumpStruct, &wCipRegDumpStruct) != 0)
+        if(mUNDODISPLAY.contains(mSelected) && CompareRegisters(mSelected, &mRegDumpStruct) != 0)
         {
-            wMenu.addAction(wCM_Undo);
+            menu.addAction(wCM_Undo);
+            wCM_CopyPrevious->setData(GetRegStringValueFromValue(mSelected, registerValue(&mCipRegDumpStruct, mSelected)));
+            wCM_CopyPrevious->setText(tr("Copy old value: %1").arg(wCM_CopyPrevious->data().toString()));
+            menu.addAction(wCM_CopyPrevious);
         }
 
         if(mBOOLDISPLAY.contains(mSelected))
         {
-            wMenu.addAction(wCM_ToggleValue);
+            menu.addAction(wCM_ToggleValue);
         }
 
         if(mFPUx87_80BITSDISPLAY.contains(mSelected))
         {
-            wMenu.addAction(wCM_Incrementx87Stack);
-            wMenu.addAction(wCM_Decrementx87Stack);
+            menu.addAction(wCM_Incrementx87Stack);
+            menu.addAction(wCM_Decrementx87Stack);
         }
 
-        if(mFPUMMX.contains(mSelected) || mFPUXMM.contains(mSelected) || mFPUYMM.contains(mSelected))
+        if(mFPUMMX.contains(mSelected) || mFPUXMM.contains(mSelected) || mFPUOpmask.contains(mSelected))
         {
-            wMenu.addMenu(mSwitchSIMDDispMode);
+            menu.addMenu(mSwitchSIMDDispMode);
         }
 
         if(mFPUMMX.contains(mSelected) || mFPUx87_80BITSDISPLAY.contains(mSelected))
         {
             if(mFpuMode != 0)
-                wMenu.addAction(mDisplaySTX);
+                menu.addAction(mDisplaySTX);
             if(mFpuMode != 1)
-                wMenu.addAction(mDisplayx87rX);
+                menu.addAction(mDisplayx87rX);
             if(mFpuMode != 2)
-                wMenu.addAction(mDisplayMMX);
+                menu.addAction(mDisplayMMX);
         }
 
-        wMenu.exec(this->mapToGlobal(pos));
+        menu.exec(this->mapToGlobal(pos));
     }
     else
     {
-        wMenu.addSeparator();
-        wMenu.addAction(wCM_ChangeFPUView);
-        wMenu.addAction(wCM_CopyAll);
-        wMenu.addMenu(mSwitchSIMDDispMode);
+        menu.addSeparator();
+        menu.addAction(wCM_ChangeFPUView);
+        menu.addAction(wCM_CopyAll);
+        menu.addMenu(mSwitchSIMDDispMode);
         if(mFpuMode != 0)
-            wMenu.addAction(mDisplaySTX);
+            menu.addAction(mDisplaySTX);
         if(mFpuMode != 1)
-            wMenu.addAction(mDisplayx87rX);
+            menu.addAction(mDisplayx87rX);
         if(mFpuMode != 2)
-            wMenu.addAction(mDisplayMMX);
-        wMenu.addSeparator();
-        QAction* wHwbpCsp = wMenu.addAction(DIcon("breakpoint.png"), tr("Set Hardware Breakpoint on %1").arg(ArchValue("ESP", "RSP")));
-        QAction* wAction = wMenu.exec(this->mapToGlobal(pos));
+            menu.addAction(mDisplayMMX);
+        menu.addSeparator();
+        QAction* hwbpCsp = menu.addAction(DIcon("breakpoint"), tr("Set Hardware Breakpoint on %1").arg(ArchValue("ESP", "RSP")));
+        QAction* action = menu.exec(this->mapToGlobal(pos));
 
-        if(wAction == wHwbpCsp)
+        if(action == hwbpCsp)
             DbgCmdExec("bphws csp,rw");
+    }
+}
+
+QString CPURegistersView::registerNameForSet(REGISTER_NAME reg) const
+{
+    QString regName;
+    if(reg >= x87st0 && reg <= x87st7)
+        regName = QString().sprintf("st%d", reg - x87st0);
+    else
+        // map "cax" to "eax" or "rax"
+        regName = mRegisterMapping.constFind(reg).value();
+
+    if(reg >= XMM0 && reg <= ArchValue(XMM7, XMM31))
+    {
+        switch(mXMMMode)
+        {
+        case 1:
+            regName[0] = 'Y';
+            break;
+        case 2:
+            regName[0] = 'Z';
+            break;
+        }
+    }
+
+    if(mFlags.contains(reg) || mFPU.contains(reg))
+        regName = "_" + regName;
+
+    return regName;
+}
+
+void CPURegistersView::setRegisterData(REGISTER_NAME reg, const void* data, size_t size)
+{
+    if(mRegisterMapping.contains(reg))
+    {
+        mRegisterUpdates.insert(reg);
+        DbgValSetBuffer(registerNameForSet(reg).toUtf8().constData(), data, size);
+        emit refresh();
     }
 }
 
 void CPURegistersView::setRegister(REGISTER_NAME reg, duint value)
 {
-    // is register-id known?
     if(mRegisterMapping.contains(reg))
     {
-        // map x87st0 to x87r0
-        QString wRegName;
-        if(reg >= x87st0 && reg <= x87st7)
-            wRegName = QString().sprintf("st%d", reg - x87st0);
-        else
-            // map "cax" to "eax" or "rax"
-            wRegName = mRegisterMapping.constFind(reg).value();
-
-        // flags need to '_' infront
-        if(mFlags.contains(reg))
-            wRegName = "_" + wRegName;
-
-        // we change the value (so highlight it)
         mRegisterUpdates.insert(reg);
-        // tell everything the compiler
-        if(mFPU.contains(reg))
-            wRegName = "_" + wRegName;
-
-        DbgValToString(wRegName.toUtf8().constData(), value);
-
-        // force repaint
+        DbgValSetScalar(registerNameForSet(reg).toUtf8().constData(), value);
         emit refresh();
     }
 }
 
-void CPURegistersView::disasmSelectionChangedSlot(dsint va)
+void CPURegistersView::disasmSelectionChangedSlot(duint va)
 {
     mHighlightRegs = mParent->getDisasmWidget()->DisassembleAt(va - mParent->getDisasmWidget()->getBase()).regsReferenced;
     emit refresh();

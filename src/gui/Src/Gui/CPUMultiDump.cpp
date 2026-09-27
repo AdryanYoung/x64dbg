@@ -9,25 +9,26 @@
 #include <QMessageBox>
 #include <QTabBar>
 
-CPUMultiDump::CPUMultiDump(CPUDisassembly* disas, int nbCpuDumpTabs, QWidget* parent)
-    : MHTabWidget(parent, true)
+CPUMultiDump::CPUMultiDump(CPUDisassembly* disassembly, int nbCpuDumpTabs, QWidget* parent)
+    : MHTabWidget(parent, true),
+      mMainDisassembly(disassembly)
 {
     setWindowTitle("CPUMultiDump");
     mMaxCPUDumpTabs = nbCpuDumpTabs;
     mInitAllDumpTabs = false;
 
     mDumpPluginMenu = new QMenu(this);
-    mDumpPluginMenu->setIcon(DIcon("plugin.png"));
+    mDumpPluginMenu->setIcon(DIcon("plugin"));
     Bridge::getBridge()->emitMenuAddToList(this, mDumpPluginMenu, GUI_DUMP_MENU);
 
     for(uint i = 0; i < mMaxCPUDumpTabs; i++)
     {
-        CPUDump* cpuDump = new CPUDump(disas, this);
+        CPUDump* cpuDump = new CPUDump(this, mMainDisassembly);
         //cpuDump->loadColumnFromConfig(QString("CPUDump%1").arg(i + 1)); //TODO: needs a workaround because the columns change
         connect(cpuDump, SIGNAL(displayReferencesWidget()), this, SLOT(displayReferencesWidgetSlot()));
         connect(cpuDump, SIGNAL(showDisassemblyTab(duint, duint, duint)), this, SLOT(showDisassemblyTabSlot(duint, duint, duint)));
         auto nativeTitle = QString("Dump ") + QString::number(i + 1);
-        this->addTabEx(cpuDump, DIcon("dump.png"), tr("Dump ") + QString::number(i + 1), nativeTitle);
+        this->addTabEx(cpuDump, DIcon("dump"), tr("Dump ") + QString::number(i + 1), nativeTitle);
         cpuDump->setWindowTitle(nativeTitle);
     }
 
@@ -37,28 +38,34 @@ CPUMultiDump::CPUMultiDump(CPUDisassembly* disas, int nbCpuDumpTabs, QWidget* pa
 
     //mMaxCPUDumpTabs++;
     auto nativeTitle = QString("Watch 1");
-    this->addTabEx(mWatch, DIcon("animal-dog.png"), tr("Watch ") + QString::number(1), nativeTitle);
+    this->addTabEx(mWatch, DIcon("animal-dog"), tr("Watch ") + QString::number(1), nativeTitle);
     mWatch->setWindowTitle(nativeTitle);
     mWatch->loadColumnFromConfig("Watch1");
 
     mLocalVars = new LocalVarsView(this);
-    this->addTabEx(mLocalVars, DIcon("localvars.png"), tr("Locals"), "Locals");
+    this->addTabEx(mLocalVars, DIcon("localvars"), tr("Locals"), "Locals");
 
     mStructWidget = new StructWidget(this);
-    this->addTabEx(mStructWidget, mStructWidget->windowIcon(), mStructWidget->windowTitle(), "Struct");
+    this->addTabEx(mStructWidget, DIcon("struct"), tr("Struct"), "Struct");
 
     connect(this, SIGNAL(currentChanged(int)), this, SLOT(updateCurrentTabSlot(int)));
     connect(tabBar(), SIGNAL(OnDoubleClickTabIndex(int)), this, SLOT(openChangeTabTitleDialogSlot(int)));
 
-    connect(Bridge::getBridge(), SIGNAL(dumpAt(dsint)), this, SLOT(printDumpAtSlot(dsint)));
+    connect(Bridge::getBridge(), SIGNAL(dumpAt(duint)), this, SLOT(printDumpAtSlot(duint)));
     connect(Bridge::getBridge(), SIGNAL(dumpAtN(duint, int)), this, SLOT(printDumpAtNSlot(duint, int)));
     connect(Bridge::getBridge(), SIGNAL(selectionDumpGet(SELECTIONDATA*)), this, SLOT(selectionGetSlot(SELECTIONDATA*)));
     connect(Bridge::getBridge(), SIGNAL(selectionDumpSet(const SELECTIONDATA*)), this, SLOT(selectionSetSlot(const SELECTIONDATA*)));
     connect(Bridge::getBridge(), SIGNAL(dbgStateChanged(DBGSTATE)), this, SLOT(dbgStateChangedSlot(DBGSTATE)));
     connect(Bridge::getBridge(), SIGNAL(focusDump()), this, SLOT(focusCurrentDumpSlot()));
+    connect(Bridge::getBridge(), SIGNAL(focusStruct()), this, SLOT(focusStructSlot()));
     connect(Bridge::getBridge(), SIGNAL(getDumpAttention()), this, SLOT(getDumpAttention()));
 
     connect(mCurrentCPUDump, SIGNAL(selectionUpdated()), mCurrentCPUDump, SLOT(selectionUpdatedSlot()));
+}
+
+Architecture* CPUMultiDump::getArchitecture() const
+{
+    return mMainDisassembly->getArchitecture();
 }
 
 CPUDump* CPUMultiDump::getCurrentCPUDump()
@@ -102,12 +109,33 @@ int CPUMultiDump::getMaxCPUTabs()
     return mMaxCPUDumpTabs;
 }
 
+void CPUMultiDump::saveWindowSettings()
+{
+    mStructWidget->saveWindowSettings("StructWidget");
+}
+
+void CPUMultiDump::loadWindowSettings()
+{
+    mStructWidget->loadWindowSettings("StructWidget");
+}
+
 int CPUMultiDump::GetDumpWindowIndex(int dump)
 {
     QString dumpNativeName = QString("Dump ") + QString::number(dump);
     for(int i = 0; i < count(); i++)
     {
         if(getNativeName(i) == dumpNativeName)
+            return i;
+    }
+    return 2147483647;
+}
+
+int CPUMultiDump::GetStructWindowIndex()
+{
+    QString structWindowName = QString("Struct");
+    for(int i = 0; i < count(); i++)
+    {
+        if(getNativeName(i) == structWindowName)
             return i;
     }
     return 2147483647;
@@ -130,6 +158,11 @@ void CPUMultiDump::SwitchToDumpWindow()
         setCurrentIndex(GetDumpWindowIndex(1));
 }
 
+void CPUMultiDump::SwitchToStructWindow()
+{
+    setCurrentIndex(GetStructWindowIndex());
+}
+
 void CPUMultiDump::SwitchToWatchWindow()
 {
     if(mCurrentCPUDump)
@@ -142,7 +175,7 @@ void CPUMultiDump::updateCurrentTabSlot(int tabIndex)
     mCurrentCPUDump = t;
 }
 
-void CPUMultiDump::printDumpAtSlot(dsint parVa)
+void CPUMultiDump::printDumpAtSlot(duint va)
 {
     if(mInitAllDumpTabs)
     {
@@ -155,8 +188,8 @@ void CPUMultiDump::printDumpAtSlot(dsint parVa)
             if(cpuDump)
             {
                 cpuDump->mHistory.historyClear();
-                cpuDump->mHistory.addVaToHistory(parVa);
-                cpuDump->printDumpAt(parVa);
+                cpuDump->mHistory.addVaToHistory(va);
+                cpuDump->printDumpAt(va);
             }
         }
 
@@ -165,12 +198,12 @@ void CPUMultiDump::printDumpAtSlot(dsint parVa)
     else
     {
         SwitchToDumpWindow();
-        mCurrentCPUDump->printDumpAt(parVa);
-        mCurrentCPUDump->mHistory.addVaToHistory(parVa);
+        mCurrentCPUDump->printDumpAt(va);
+        mCurrentCPUDump->mHistory.addVaToHistory(va);
     }
 }
 
-void CPUMultiDump::printDumpAtNSlot(duint parVa, int index)
+void CPUMultiDump::printDumpAtNSlot(duint va, int index)
 {
     int tabindex = GetDumpWindowIndex(index);
     if(tabindex == 2147483647)
@@ -179,8 +212,8 @@ void CPUMultiDump::printDumpAtNSlot(duint parVa, int index)
     if(!current)
         return;
     setCurrentIndex(tabindex);
-    current->printDumpAt(parVa);
-    current->mHistory.addVaToHistory(parVa);
+    current->printDumpAt(va);
+    current->mHistory.addVaToHistory(va);
 }
 
 void CPUMultiDump::selectionGetSlot(SELECTIONDATA* selectionData)
@@ -225,26 +258,32 @@ void CPUMultiDump::focusCurrentDumpSlot()
     mCurrentCPUDump->setFocus();
 }
 
+void CPUMultiDump::focusStructSlot()
+{
+    SwitchToStructWindow();
+    mStructWidget->setFocus();
+}
+
 void CPUMultiDump::showDisassemblyTabSlot(duint selectionStart, duint selectionEnd, duint firstAddress)
 {
     Q_UNUSED(firstAddress); // TODO: implement setTableOffset(firstAddress)
-    if(!mDisassembly)
+    if(!mExtraDisassembly)
     {
-        mDisassembly = new CPUDisassembly(this, false);
-        this->addTabEx(mDisassembly, DIcon(ArchValue("processor32.png", "processor64.png")), tr("Disassembly"), "DumpDisassembly");
+        mExtraDisassembly = new CPUDisassembly(mMainDisassembly->getArchitecture(), false, this);
+        this->addTabEx(mExtraDisassembly, DIcon(ArchValue("processor32", "processor64")), tr("Disassembly"), "DumpDisassembly");
     }
     // Set CIP
-    auto clearHistory = mDisassembly->getBase() == 0;
-    mDisassembly->disassembleAtSlot(selectionStart, Bridge::getBridge()->mLastCip);
+    auto clearHistory = mExtraDisassembly->getBase() == 0;
+    mExtraDisassembly->disassembleAtSlot(selectionStart, Bridge::getBridge()->mLastCip);
     if(clearHistory)
-        mDisassembly->historyClear();
-    // Make the address visisble in memory
-    mDisassembly->disassembleAt(selectionStart, true, -1);
+        mExtraDisassembly->historyClear();
+    // Make the address visible in memory
+    mExtraDisassembly->disassembleAt(selectionStart, true, -1);
     // Set selection to match the dump
-    mDisassembly->setSingleSelection(selectionStart - mDisassembly->getBase());
-    mDisassembly->expandSelectionUpTo(selectionEnd - mDisassembly->getBase());
+    mExtraDisassembly->setSingleSelection(selectionStart - mExtraDisassembly->getBase());
+    mExtraDisassembly->expandSelectionUpTo(selectionEnd - mExtraDisassembly->getBase());
     // Show the tab
-    setCurrentWidget(mDisassembly);
+    setCurrentWidget(mExtraDisassembly);
 }
 
 void CPUMultiDump::getDumpAttention()

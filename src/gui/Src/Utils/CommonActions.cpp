@@ -8,6 +8,9 @@
 #include "Breakpoints.h"
 #include "LineEditDialog.h"
 #include "WordEditDialog.h"
+#include "GotoDialog.h"
+#include "DisplayTypeDialog.h"
+#include <BasicView/Disassembly.h>
 
 CommonActions::CommonActions(QWidget* parent, ActionHelperFuncs funcs, GetSelectionFunc getSelection)
     : QObject(parent), ActionHelperProxy(funcs), mGetSelection(getSelection)
@@ -17,11 +20,11 @@ CommonActions::CommonActions(QWidget* parent, ActionHelperFuncs funcs, GetSelect
 void CommonActions::build(MenuBuilder* builder, int actions)
 {
     // Condition Lambda
-    auto wIsDebugging = [this](QMenu*)
+    auto isDebugging = [this](QMenu*)
     {
         return mGetSelection() != 0 && DbgIsDebugging();
     };
-    auto wIsValidReadPtrCallback = [this](QMenu*)
+    auto isValidReadPtr = [this](QMenu*)
     {
         duint ptr = 0;
         DbgMemRead(mGetSelection(), (unsigned char*)&ptr, sizeof(duint));
@@ -31,19 +34,19 @@ void CommonActions::build(MenuBuilder* builder, int actions)
     // Menu action
     if(actions & ActionDisasm)
     {
-        builder->addAction(makeShortcutAction(DIcon(ArchValue("processor32.png", "processor64.png")), tr("Follow in Disassembler"), std::bind(&CommonActions::followDisassemblySlot, this), "ActionFollowDisasm"), wIsDebugging);
+        builder->addAction(makeShortcutDescAction(DIcon(ArchValue("processor32", "processor64")), tr("Follow in Disassembler"), tr("Show this address in disassembler. Equivalent command \"d address\"."), std::bind(&CommonActions::followDisassemblySlot, this), "ActionFollowDisasm"), isDebugging);
     }
     if(actions & ActionDisasmData)
     {
-        builder->addAction(makeCommandAction(DIcon("processor32.png"), ArchValue(tr("&Follow DWORD in Disassembler"), tr("&Follow QWORD in Disassembler")), "disasm [$]", "ActionFollowDwordQwordDisasm"), wIsValidReadPtrCallback);
+        builder->addAction(makeCommandAction(DIcon("processor32"), ArchValue(tr("&Follow DWORD in Disassembler"), tr("&Follow QWORD in Disassembler")), "disasm [$]", "ActionFollowDwordQwordDisasm"), isValidReadPtr);
     }
     if(actions & ActionDump)
     {
-        builder->addAction(makeCommandAction(DIcon("dump.png"), tr("Follow in Dump"), "dump $"));
+        builder->addAction(makeCommandDescAction(DIcon("dump"), tr("Follow in Dump"), tr("Show the address in dump. Equivalent command \"dump address\"."), "dump $"));
     }
     if(actions & ActionDumpData)
     {
-        builder->addAction(makeCommandAction(DIcon("dump.png"), ArchValue(tr("&Follow DWORD in Current Dump"), tr("&Follow QWORD in Current Dump")), "dump [$]", "ActionFollowDwordQwordDump"), wIsValidReadPtrCallback);
+        builder->addAction(makeCommandAction(DIcon("dump"), ArchValue(tr("&Follow DWORD in Current Dump"), tr("&Follow QWORD in Current Dump")), "dump [$]", "ActionFollowDwordQwordDump"), isValidReadPtr);
     }
     if(actions & ActionDumpN)
     {
@@ -62,11 +65,11 @@ void CommonActions::build(MenuBuilder* builder, int actions)
             if(DbgMemIsValidReadPtr(selectedData))
                 DbgCmdExec(QString("dump [%1], %2").arg(ToPtrString(selectedData)).arg(i + 1));
         }));
-        builder->addMenu(makeMenu(DIcon("dump.png"), ArchValue(tr("Follow DWORD in Dump"), tr("Follow QWORD in Dump"))), followDumpNMenu);
+        builder->addMenu(makeMenu(DIcon("dump"), ArchValue(tr("Follow DWORD in Dump"), tr("Follow QWORD in Dump"))), followDumpNMenu);
     }
     if(actions & ActionStackDump)
     {
-        builder->addAction(makeCommandAction(DIcon("stack.png"), tr("Follow in Stack"), "sdump $", "ActionFollowStack"), [this](QMenu*)
+        builder->addAction(makeCommandDescAction(DIcon("stack"), tr("Follow in Stack"), tr("Show this address in stack view. Equivalent command \"sdump address\"."), "sdump $", "ActionFollowStack"), [this](QMenu*)
         {
             auto start = mGetSelection();
             return (DbgMemIsValidReadPtr(start) && DbgMemFindBaseAddr(start, 0) == DbgMemFindBaseAddr(DbgValFromString("csp"), 0));
@@ -74,11 +77,20 @@ void CommonActions::build(MenuBuilder* builder, int actions)
     }
     if(actions & ActionMemoryMap)
     {
-        builder->addAction(makeCommandAction(DIcon("memmap_find_address_page.png"), tr("Follow in Memory Map"), "memmapdump $", "ActionFollowMemMap"), wIsDebugging);
+        builder->addAction(makeCommandDescAction(DIcon("memmap_find_address_page"), tr("Follow in Memory Map"), tr("Show this address in memory map view. Equivalent command \"memmapdump address\"."), "memmapdump $", "ActionFollowMemMap"), isDebugging);
     }
     if(actions & ActionGraph)
     {
-        builder->addAction(makeShortcutAction(DIcon("graph.png"), tr("Graph"), std::bind(&CommonActions::graphSlot, this), "ActionGraph"));
+        builder->addAction(makeShortcutDescAction(DIcon("graph"), tr("Graph"), tr("Show the control flow graph of this function in CPU view. Equivalent command \"graph address\"."), std::bind(&CommonActions::graphSlot, this), "ActionGraph"));
+    }
+    if(actions & ActionDisplayType)
+    {
+        auto action = makeShortcutDescAction(DIcon("visitstruct"), tr("Display type at %1").arg("0"), tr("Display a type at this address in the struct view."), std::bind(&CommonActions::displayTypeSlot, this), "ActionDisplayType");
+        builder->addAction(action, [this, action](QMenu*)
+        {
+            action->setText(tr("Display type at %1").arg(ToPtrString(mGetSelection())));
+            return true;
+        });
     }
     if(actions & ActionBreakpoint)
     {
@@ -92,19 +104,19 @@ void CommonActions::build(MenuBuilder* builder, int actions)
             QAction* replaceSlotAction[4];
         } hodl;
 
-        hodl.toggleBreakpointAction = makeShortcutAction(DIcon("breakpoint_toggle.png"), tr("Toggle"), std::bind(&CommonActions::toggleInt3BPActionSlot, this), "ActionToggleBreakpoint");
-        hodl.editSoftwareBreakpointAction = makeShortcutAction(DIcon("breakpoint_edit_alt.png"), tr("Edit"), std::bind(&CommonActions::editSoftBpActionSlot, this), "ActionEditBreakpoint");
-        hodl.setHwBreakpointAction = makeShortcutAction(DIcon("breakpoint_execute.png"), tr("Set Hardware on Execution"), std::bind(&CommonActions::toggleHwBpActionSlot, this), "ActionSetHwBpE");
-        hodl.removeHwBreakpointAction = makeShortcutAction(DIcon("breakpoint_remove.png"), tr("Remove Hardware"), std::bind(&CommonActions::toggleHwBpActionSlot, this), "ActionRemoveHwBp");
+        hodl.toggleBreakpointAction = makeShortcutAction(DIcon("breakpoint_toggle"), tr("Toggle"), std::bind(&CommonActions::toggleInt3BPActionSlot, this), "ActionToggleBreakpoint");
+        hodl.editSoftwareBreakpointAction = makeShortcutAction(DIcon("breakpoint_edit_alt"), tr("Edit"), std::bind(&CommonActions::editSoftBpActionSlot, this), "ActionEditBreakpoint");
+        hodl.setHwBreakpointAction = makeShortcutAction(DIcon("breakpoint_execute"), tr("Set Hardware on Execution"), std::bind(&CommonActions::toggleHwBpActionSlot, this), "ActionSetHwBpE");
+        hodl.removeHwBreakpointAction = makeShortcutAction(DIcon("breakpoint_remove"), tr("Remove Hardware"), std::bind(&CommonActions::toggleHwBpActionSlot, this), "ActionRemoveHwBp");
 
-        hodl.replaceSlotMenu = makeMenu(DIcon("breakpoint_execute.png"), tr("Set Hardware on Execution"));
+        hodl.replaceSlotMenu = makeMenu(DIcon("breakpoint_execute"), tr("Set Hardware on Execution"));
         // Replacement slot menu are only used when the breakpoints are full, so using "Unknown" as the placeholder. Might want to change this in case we display the menu when there are still free slots.
-        hodl.replaceSlotAction[0] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot1.png"), tr("Replace Slot %1 (Unknown)").arg(1), std::bind(&CommonActions::setHwBpOnSlot0ActionSlot, this));
-        hodl.replaceSlotAction[1] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot2.png"), tr("Replace Slot %1 (Unknown)").arg(2), std::bind(&CommonActions::setHwBpOnSlot1ActionSlot, this));
-        hodl.replaceSlotAction[2] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot3.png"), tr("Replace Slot %1 (Unknown)").arg(3), std::bind(&CommonActions::setHwBpOnSlot2ActionSlot, this));
-        hodl.replaceSlotAction[3] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot4.png"), tr("Replace Slot %1 (Unknown)").arg(4), std::bind(&CommonActions::setHwBpOnSlot3ActionSlot, this));
+        hodl.replaceSlotAction[0] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot1"), tr("Replace Slot %1 (Unknown)").arg(1), std::bind(&CommonActions::setHwBpOnSlot0ActionSlot, this));
+        hodl.replaceSlotAction[1] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot2"), tr("Replace Slot %1 (Unknown)").arg(2), std::bind(&CommonActions::setHwBpOnSlot1ActionSlot, this));
+        hodl.replaceSlotAction[2] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot3"), tr("Replace Slot %1 (Unknown)").arg(3), std::bind(&CommonActions::setHwBpOnSlot2ActionSlot, this));
+        hodl.replaceSlotAction[3] = makeMenuAction(hodl.replaceSlotMenu, DIcon("breakpoint_execute_slot4"), tr("Replace Slot %1 (Unknown)").arg(4), std::bind(&CommonActions::setHwBpOnSlot3ActionSlot, this));
 
-        builder->addMenu(makeMenu(DIcon("breakpoint.png"), tr("Breakpoint")), [this, hodl](QMenu * menu)
+        builder->addMenu(makeMenu(DIcon("breakpoint"), tr("Breakpoint")), [this, hodl](QMenu * menu)
         {
             auto selection = mGetSelection();
             if(selection == 0)
@@ -156,27 +168,27 @@ void CommonActions::build(MenuBuilder* builder, int actions)
     }
     if(actions & ActionLabel)
     {
-        builder->addAction(makeShortcutAction(DIcon("label.png"), tr("Label Current Address"), std::bind(&CommonActions::setLabelSlot, this), "ActionSetLabel"), wIsDebugging);
+        builder->addAction(makeShortcutAction(DIcon("label"), tr("Label Current Address"), std::bind(&CommonActions::setLabelSlot, this), "ActionSetLabel"), isDebugging);
     }
     if(actions & ActionComment)
     {
-        builder->addAction(makeShortcutAction(DIcon("comment.png"), tr("Comment"), std::bind(&CommonActions::setCommentSlot, this), "ActionSetComment"), wIsDebugging);
+        builder->addAction(makeShortcutAction(DIcon("comment"), tr("Comment"), std::bind(&CommonActions::setCommentSlot, this), "ActionSetComment"), isDebugging);
     }
     if(actions & ActionBookmark)
     {
-        builder->addAction(makeShortcutAction(DIcon("bookmark_toggle.png"), tr("Toggle Bookmark"), std::bind(&CommonActions::setBookmarkSlot, this), "ActionToggleBookmark"), wIsDebugging);
+        builder->addAction(makeShortcutDescAction(DIcon("bookmark_toggle"), tr("Toggle Bookmark"), tr("Set a bookmark here, or remove bookmark. Equivalent command \"bookmarkset address\"/\"bookmarkdel address\"."), std::bind(&CommonActions::setBookmarkSlot, this), "ActionToggleBookmark"), isDebugging);
     }
     if(actions & ActionNewOrigin)
     {
-        builder->addAction(makeShortcutAction(DIcon("neworigin.png"), tr("Set New Origin Here"), std::bind(&CommonActions::setNewOriginHereActionSlot, this), "ActionSetNewOriginHere"));
+        builder->addAction(makeShortcutDescAction(DIcon("neworigin"), tr("Set %1 Here").arg(ArchValue("EIP", "RIP")), tr("Set the next executed instruction to this address. Equivalent command \"mov cip, address\"."), std::bind(&CommonActions::setNewOriginHereActionSlot, this), "ActionSetNewOriginHere"));
     }
     if(actions & ActionNewThread)
     {
-        builder->addAction(makeShortcutAction(DIcon("createthread.png"), tr("Create New Thread Here"), std::bind(&CommonActions::createThreadSlot, this), "ActionCreateNewThreadHere"));
+        builder->addAction(makeShortcutDescAction(DIcon("createthread"), tr("Create New Thread Here"), tr("Create a new thread at this address. Equivalent command \"createthread address, argument\"."), std::bind(&CommonActions::createThreadSlot, this), "ActionCreateNewThreadHere"));
     }
     if(actions & ActionWatch)
     {
-        builder->addAction(makeCommandAction(DIcon("animal-dog.png"), ArchValue(tr("&Watch DWORD"), tr("&Watch QWORD")), "AddWatch \"[$]\", \"uint\"", "ActionWatchDwordQword"));
+        builder->addAction(makeCommandDescAction(DIcon("animal-dog"), ArchValue(tr("&Watch DWORD"), tr("&Watch QWORD")), tr("Add the address in the watch view. Equivalent command \"AddWatch [address], \"uint\"\"."), "AddWatch \"[$]\", \"uint\"", "ActionWatchDwordQword"));
     }
 }
 
@@ -197,7 +209,23 @@ QAction* CommonActions::makeCommandAction(const QIcon & icon, const QString & te
     });
 }
 
-QWidget* CommonActions::widgetparent()
+static QAction* makeDescActionHelper(QAction* action, const QString & description)
+{
+    action->setStatusTip(description);
+    return action;
+}
+
+QAction* CommonActions::makeCommandDescAction(const QIcon & icon, const QString & text, const QString & description, const char* cmd)
+{
+    return makeDescActionHelper(makeCommandAction(icon, text, cmd), description);
+}
+
+QAction* CommonActions::makeCommandDescAction(const QIcon & icon, const QString & text, const QString & description, const char* cmd, const char* shortcut)
+{
+    return makeDescActionHelper(makeCommandAction(icon, text, cmd, shortcut), description);
+}
+
+QWidget* CommonActions::widgetparent() const
 {
     return dynamic_cast<QWidget*>(parent());
 }
@@ -215,30 +243,30 @@ void CommonActions::followDisassemblySlot()
 
 void CommonActions::setLabelSlot()
 {
-    duint wVA = mGetSelection();
+    duint va = mGetSelection();
     LineEditDialog mLineEdit(widgetparent());
     mLineEdit.setTextMaxLength(MAX_LABEL_SIZE - 2);
-    QString addr_text = ToPtrString(wVA);
+    QString addrText = ToPtrString(va);
     char label_text[MAX_COMMENT_SIZE] = "";
-    if(DbgGetLabelAt((duint)wVA, SEG_DEFAULT, label_text))
+    if(DbgGetLabelAt((duint)va, SEG_DEFAULT, label_text))
         mLineEdit.setText(QString(label_text));
-    mLineEdit.setWindowTitle(tr("Add label at ") + addr_text);
+    mLineEdit.setWindowTitle(tr("Add label at ") + addrText);
 restart:
     if(mLineEdit.exec() != QDialog::Accepted)
         return;
     QByteArray utf8data = mLineEdit.editText.toUtf8();
-    if(!utf8data.isEmpty() && DbgIsValidExpression(utf8data.constData()) && DbgValFromString(utf8data.constData()) != wVA)
+    if(!utf8data.isEmpty() && DbgIsValidExpression(utf8data.constData()) && DbgValFromString(utf8data.constData()) != va)
     {
         QMessageBox msg(QMessageBox::Warning, tr("The label may be in use"),
                         tr("The label \"%1\" may be an existing label or a valid expression. Using such label might have undesired effects. Do you still want to continue?").arg(mLineEdit.editText),
                         QMessageBox::Yes | QMessageBox::No, widgetparent());
-        msg.setWindowIcon(DIcon("compile-warning.png"));
+        msg.setWindowIcon(DIcon("compile-warning"));
         msg.setParent(widgetparent(), Qt::Dialog);
         msg.setWindowFlags(msg.windowFlags() & (~Qt::WindowContextHelpButtonHint));
         if(msg.exec() == QMessageBox::No)
             goto restart;
     }
-    if(!DbgSetLabelAt(wVA, utf8data.constData()))
+    if(!DbgSetLabelAt(va, utf8data.constData()))
         SimpleErrorBox(widgetparent(), tr("Error!"), tr("DbgSetLabelAt failed!"));
 
     GuiUpdateAllViews();
@@ -248,29 +276,29 @@ void CommonActions::setCommentSlot()
 {
     if(!DbgIsDebugging())
         return;
-    duint wVA = mGetSelection();
+    duint va = mGetSelection();
     LineEditDialog mLineEdit(widgetparent());
     mLineEdit.setTextMaxLength(MAX_COMMENT_SIZE - 2);
-    QString addr_text = ToPtrString(wVA);
+    QString addrText = ToPtrString(va);
     char comment_text[MAX_COMMENT_SIZE] = "";
-    if(DbgGetCommentAt((duint)wVA, comment_text))
+    if(DbgGetCommentAt((duint)va, comment_text))
     {
         if(comment_text[0] == '\1') //automatic comment
             mLineEdit.setText(QString(comment_text + 1));
         else
             mLineEdit.setText(QString(comment_text));
     }
-    mLineEdit.setWindowTitle(tr("Add comment at ") + addr_text);
+    mLineEdit.setWindowTitle(tr("Add comment at ") + addrText);
     if(mLineEdit.exec() != QDialog::Accepted)
         return;
     QString comment = mLineEdit.editText.replace('\r', "").replace('\n', "");
-    if(!DbgSetCommentAt(wVA, comment.toUtf8().constData()))
+    if(!DbgSetCommentAt(va, comment.toUtf8().constData()))
         SimpleErrorBox(widgetparent(), tr("Error!"), tr("DbgSetCommentAt failed!"));
 
     static bool easter = isEaster();
     if(easter && comment.toLower() == "oep")
     {
-        QFile file(":/icons/images/egg.wav");
+        QFile file(":/Default/icons/egg.wav");
         if(file.open(QIODevice::ReadOnly))
         {
             QByteArray egg = file.readAll();
@@ -285,22 +313,23 @@ void CommonActions::setBookmarkSlot()
 {
     if(!DbgIsDebugging())
         return;
-    duint wVA = mGetSelection();
+    duint va = mGetSelection();
     bool result;
-    result = DbgSetBookmarkAt(wVA, !DbgGetBookmarkAt(wVA));
+    result = DbgSetBookmarkAt(va, !DbgGetBookmarkAt(va));
     if(!result)
         SimpleErrorBox(widgetparent(), tr("Error!"), tr("DbgSetBookmarkAt failed!"));
     GuiUpdateAllViews();
 }
 
 // Give a warning about the selected address is not executable
-bool CommonActions::WarningBoxNotExecutable(const QString & text, duint wVA)
+bool CommonActions::WarningBoxNotExecutable(const QString & text, duint va) const
 {
-    if(DbgFunctions()->IsDepEnabled() && !DbgFunctions()->MemIsCodePage(wVA, false))
+    if(DbgFunctions()->IsDepEnabled() && !DbgFunctions()->MemIsCodePage(va, true))
     {
-        QMessageBox msgyn(QMessageBox::Warning, tr("Current address is not executable"), text, QMessageBox::Yes | QMessageBox::No, widgetparent());
-        msgyn.setWindowIcon(DIcon("compile-warning.png"));
+        QMessageBox msgyn(QMessageBox::Warning, tr("Address %1 is not executable").arg(ToPtrString(va)), text, QMessageBox::Yes | QMessageBox::No, widgetparent());
+        msgyn.setWindowIcon(DIcon("compile-warning"));
         msgyn.setParent(widgetparent(), Qt::Dialog);
+        msgyn.setDefaultButton(QMessageBox::No);
         msgyn.setWindowFlags(msgyn.windowFlags() & (~Qt::WindowContextHelpButtonHint));
         if(msgyn.exec() == QMessageBox::No)
             return false;
@@ -312,20 +341,59 @@ void CommonActions::toggleInt3BPActionSlot()
 {
     if(!DbgIsDebugging())
         return;
-    duint wVA = mGetSelection();
-    BPXTYPE wBpType = DbgGetBpxTypeAt(wVA);
-    QString wCmd;
-
-    if((wBpType & bp_normal) == bp_normal)
-        wCmd = "bc " + ToPtrString(wVA);
-    else
+    if(auto disasm = qobject_cast<Disassembly*>(parent()))
     {
-        if(!WarningBoxNotExecutable(tr("Setting software breakpoint here may result in crash. Do you really want to continue?"), wVA))
-            return;
-        wCmd = "bp " + ToPtrString(wVA);
+        auto selectionStart = disasm->getSelectionStart();
+        auto selectionEnd = disasm->getSelectionEnd();
+        duint warningVa = 0;
+
+        disasm->prepareDataRange(selectionStart, selectionEnd, [&](int, const Instruction_t & inst)
+        {
+            duint va = disasm->rvaToVa(inst.rva);
+            BPXTYPE bpType = DbgGetBpxTypeAt(va);
+            if((bpType & bp_normal) != bp_normal && !DbgFunctions()->MemIsCodePage(va, true))
+            {
+                warningVa = va;
+                return false;
+            }
+            return true;
+        });
+
+        if(warningVa)
+        {
+            if(!WarningBoxNotExecutable(tr("Setting software breakpoint here may result in crash. Do you really want to continue?"), warningVa))
+                return;
+        }
+
+        disasm->prepareDataRange(selectionStart, selectionEnd, [&](int, const Instruction_t & inst)
+        {
+            duint va = disasm->rvaToVa(inst.rva);
+            BPXTYPE bpType = DbgGetBpxTypeAt(va);
+            QString cmd;
+            if((bpType & bp_normal) == bp_normal)
+                cmd = "bc " + ToPtrString(va);
+            else
+                cmd = "bp " + ToPtrString(va);
+            DbgCmdExec(cmd);
+            return true;
+        });
+        return;
     }
 
-    DbgCmdExec(wCmd);
+    duint va = mGetSelection();
+    BPXTYPE bpType = DbgGetBpxTypeAt(va);
+    QString cmd;
+
+    if((bpType & bp_normal) == bp_normal)
+        cmd = "bc " + ToPtrString(va);
+    else
+    {
+        if(!WarningBoxNotExecutable(tr("Setting software breakpoint here may result in crash. Do you really want to continue?"), va))
+            return;
+        cmd = "bp " + ToPtrString(va);
+    }
+
+    DbgCmdExec(cmd);
     //emit Disassembly::repainted();
 }
 
@@ -334,36 +402,42 @@ void CommonActions::editSoftBpActionSlot()
 {
     auto selection = mGetSelection();
     if(selection == 0)
+    {
         return;
+    }
+
     BPXTYPE bpType = DbgGetBpxTypeAt(selection);
     if((bpType & bp_hardware) == bp_hardware)
-        Breakpoints::editBP(bp_hardware, ToHexString(selection), widgetparent());
+    {
+        Breakpoints::editBP(bp_hardware, QString(), selection, widgetparent());
+    }
     else if((bpType & bp_normal) == bp_normal)
-        Breakpoints::editBP(bp_normal, ToHexString(selection), widgetparent());
+    {
+        Breakpoints::editBP(bp_normal, QString(), selection, widgetparent());
+    }
     else
     {
-        DbgCmdExecDirect(QString("bp %1").arg(ToHexString(selection))); //Blocking call
-        if(!Breakpoints::editBP(bp_normal, ToHexString(selection), widgetparent()))
-            Breakpoints::removeBP(bp_normal, selection);
+        auto createCommand = QString("bp %1").arg(ToHexString(selection));
+        Breakpoints::editBP(bp_normal, QString(), selection, widgetparent(), createCommand);
     }
 }
 
 void CommonActions::toggleHwBpActionSlot()
 {
-    duint wVA = mGetSelection();
-    BPXTYPE wBpType = DbgGetBpxTypeAt(wVA);
-    QString wCmd;
+    duint va = mGetSelection();
+    BPXTYPE bpType = DbgGetBpxTypeAt(va);
+    QString cmd;
 
-    if((wBpType & bp_hardware) == bp_hardware)
+    if((bpType & bp_hardware) == bp_hardware)
     {
-        wCmd = "bphwc " + ToPtrString(wVA);
+        cmd = "bphwc " + ToPtrString(va);
     }
     else
     {
-        wCmd = "bphws " + ToPtrString(wVA);
+        cmd = "bphws " + ToPtrString(va);
     }
 
-    DbgCmdExec(wCmd);
+    DbgCmdExec(cmd);
 }
 
 
@@ -389,40 +463,38 @@ void CommonActions::setHwBpOnSlot3ActionSlot()
 
 void CommonActions::setHwBpAt(duint va, int slot)
 {
-    int wI = 0;
-    int wSlotIndex = -1;
-    BPMAP wBPList;
-    QString wCmd = "";
-
-    DbgGetBpList(bp_hardware, &wBPList);
+    int slotIndex = -1;
+    BPMAP bpList = {};
+    DbgGetBpList(bp_hardware, &bpList);
 
     // Find index of slot slot in the list
-    for(wI = 0; wI < wBPList.count; wI++)
+    for(int i = 0; i < bpList.count; i++)
     {
-        if(wBPList.bp[wI].slot == (unsigned short)slot)
+        if(bpList.bp[i].slot == (unsigned short)slot)
         {
-            wSlotIndex = wI;
+            slotIndex = i;
             break;
         }
     }
 
-    if(wSlotIndex < 0) // Slot not used
+    QString cmd;
+    if(slotIndex < 0) // Slot not used
     {
-        wCmd = "bphws " + ToPtrString(va);
-        DbgCmdExec(wCmd);
+        cmd = "bphws " + ToPtrString(va);
+        DbgCmdExec(cmd);
     }
     else // Slot used
     {
-        wCmd = "bphwc " + ToPtrString((duint)(wBPList.bp[wSlotIndex].addr));
-        DbgCmdExec(wCmd);
+        cmd = "bphwc " + ToPtrString((duint)(bpList.bp[slotIndex].addr));
+        DbgCmdExec(cmd);
 
         Sleep(200);
 
-        wCmd = "bphws " + ToPtrString(va);
-        DbgCmdExec(wCmd);
+        cmd = "bphws " + ToPtrString(va);
+        DbgCmdExec(cmd);
     }
-    if(wBPList.count)
-        BridgeFree(wBPList.bp);
+    if(bpList.count)
+        BridgeFree(bpList.bp);
 }
 
 void CommonActions::graphSlot()
@@ -431,25 +503,30 @@ void CommonActions::graphSlot()
         GuiFocusView(GUI_GRAPH);
 }
 
+void CommonActions::displayTypeSlot()
+{
+    DisplayTypeDialog::pickType(widgetparent(), mGetSelection());
+}
+
 void CommonActions::setNewOriginHereActionSlot()
 {
     if(!DbgIsDebugging())
         return;
-    duint wVA = mGetSelection();
-    if(!WarningBoxNotExecutable(tr("Setting new origin here may result in crash. Do you really want to continue?"), wVA))
+    duint va = mGetSelection();
+    if(!WarningBoxNotExecutable(tr("Setting new origin here may result in crash. Do you really want to continue?"), va))
         return;
-    QString wCmd = "cip=" + ToPtrString(wVA);
-    DbgCmdExec(wCmd);
+    QString cmd = "cip=" + ToPtrString(va);
+    DbgCmdExec(cmd);
 }
 
 void CommonActions::createThreadSlot()
 {
-    duint wVA = mGetSelection();
-    if(!WarningBoxNotExecutable(tr("Creating new thread here may result in crash. Do you really want to continue?"), wVA))
+    duint va = mGetSelection();
+    if(!WarningBoxNotExecutable(tr("Creating new thread here may result in crash. Do you really want to continue?"), va))
         return;
     WordEditDialog argWindow(widgetparent());
     argWindow.setup(tr("Argument for the new thread"), 0, sizeof(duint));
     if(argWindow.exec() != QDialog::Accepted)
         return;
-    DbgCmdExec(QString("createthread %1, %2").arg(ToPtrString(wVA)).arg(ToPtrString(argWindow.getVal())));
+    DbgCmdExec(QString("createthread %1, %2").arg(ToPtrString(va)).arg(ToPtrString(argWindow.getVal())));
 }

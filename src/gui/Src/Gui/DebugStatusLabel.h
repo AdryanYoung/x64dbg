@@ -1,5 +1,4 @@
-#ifndef LABELCLASS_H
-#define LABELCLASS_H
+#pragma once
 
 #include <QLabel>
 #include <QStatusBar>
@@ -11,7 +10,7 @@ class DebugStatusLabel : public QLabel
 
 public:
     Q_PROPERTY(QString state READ state NOTIFY stateChanged)
-    explicit DebugStatusLabel(QStatusBar* parent = 0);
+    explicit DebugStatusLabel(QStatusBar* parent = nullptr);
     QString state() const;
 
 public slots:
@@ -24,5 +23,3 @@ private:
     QString mStatusTexts[4];
     QString mState;
 };
-
-#endif // LABELCLASS_H

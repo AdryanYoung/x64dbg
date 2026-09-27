@@ -158,6 +158,9 @@ void PatchDialog::updatePatches()
     if(mPatches.size())
         ui->listModules->item(0)->setSelected(true); //select first module
 
+    // QListWidget can retain an explicitly hidden state after the dialog is closed
+    // with a patch selected. Make sure the refreshed list is shown again.
+    ui->listPatches->setVisible(true);
     mIsWorking = false;
 }
 
@@ -470,7 +473,7 @@ void PatchDialog::on_btnPatchFile_clicked()
     strcpy_s(szDirName, szModName);
     szDirName[len] = '\0';
 
-    QString filename = QFileDialog::getSaveFileName(this, tr("Save file"), szDirName, tr("All files (*.*)"));
+    QString filename = QFileDialog::getSaveFileName(this, tr("Save file"), szDirName);
     if(!filename.length())
         return;
     filename = QDir::toNativeSeparators(filename); //convert to native path format (with backlashes)
@@ -501,9 +504,13 @@ void PatchDialog::on_btnImport_clicked()
     {
         bool badoriginal;
         bool alreadypatched;
+        unsigned char actualbyte; // byte snapshot on import
     } IMPORTSTATUS;
     QList<QPair<DBGPATCHINFO, IMPORTSTATUS>> patchList;
     DBGPATCHINFO curPatch;
+
+    if(!filenamelist.size())
+        return; // No files are selected, don't show the "No patches to apply in the current process." dialog.
 
     for(const auto & filename1 : filenamelist)
     {
@@ -555,6 +562,7 @@ void PatchDialog::on_btnImport_clicked()
             IMPORTSTATUS status;
             status.alreadypatched = (checkbyte == newbyte);
             status.badoriginal = (checkbyte != oldbyte);
+            status.actualbyte = checkbyte;
             if(status.alreadypatched)
                 bAlreadyDone = true;
             else if(status.badoriginal)
@@ -577,7 +585,7 @@ void PatchDialog::on_btnImport_clicked()
     if(bAlreadyDone)
     {
         QMessageBox msg(QMessageBox::Question, tr("Question"), tr("Some patches are already applied.\n\nDo you want to remove these patches?"), QMessageBox::Yes | QMessageBox::No);
-        msg.setWindowIcon(DIcon("question.png"));
+        msg.setWindowIcon(DIcon("question"));
         msg.setParent(this, Qt::Dialog);
         msg.setWindowFlags(msg.windowFlags() & (~Qt::WindowContextHelpButtonHint));
         if(msg.exec() == QMessageBox::Yes)
@@ -588,7 +596,7 @@ void PatchDialog::on_btnImport_clicked()
     if(bBadOriginal)
     {
         QMessageBox msg(QMessageBox::Question, tr("Question"), tr("Some bytes do not match the original in the patch file.\n\nDo you want to apply these patches anyway?"), QMessageBox::Yes | QMessageBox::No);
-        msg.setWindowIcon(DIcon("question.png"));
+        msg.setWindowIcon(DIcon("question"));
         msg.setParent(this, Qt::Dialog);
         msg.setWindowFlags(msg.windowFlags() & (~Qt::WindowContextHelpButtonHint));
         if(msg.exec() == QMessageBox::Yes)
@@ -603,7 +611,13 @@ void PatchDialog::on_btnImport_clicked()
         curPatch = patchList.at(i).first;
         if(bUndoPatched && patchList.at(i).second.alreadypatched)
         {
-            if(DbgFunctions()->MemPatch(curPatch.addr, &curPatch.oldbyte, 1))
+            unsigned char byteToWrite;
+            if(patchList.at(i).second.badoriginal)
+                byteToWrite = patchList.at(i).second.actualbyte;
+            else
+                byteToWrite = curPatch.oldbyte;
+
+            if(DbgFunctions()->MemPatch(curPatch.addr, &byteToWrite, 1))
                 patched++;
         }
         else

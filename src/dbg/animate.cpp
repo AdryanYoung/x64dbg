@@ -8,7 +8,7 @@ HANDLE hAnimateThread = nullptr;
 
 static DWORD WINAPI animateThread(void* arg1)
 {
-    auto ignoreError = settingboolget("Misc", "AnimateIgnoreError");
+    auto ignoreError = settingboolget("Misc", "AnimateIgnoreError", false);
     while(animate_command[0] != 0)
     {
         auto beforeTime = GetTickCount();
@@ -27,7 +27,7 @@ static DWORD WINAPI animateThread(void* arg1)
     return 0;
 }
 
-bool _dbg_animatecommand(const char* command)
+bool dbganimatecommand(const char* command)
 {
     if(command) // Animate command
     {

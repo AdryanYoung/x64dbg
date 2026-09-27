@@ -1,5 +1,4 @@
-#ifndef ATTACHDIALOG_H
-#define ATTACHDIALOG_H
+#pragma once
 
 #include <QDialog>
 
@@ -17,16 +16,18 @@ class AttachDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit AttachDialog(QWidget* parent = 0);
+    explicit AttachDialog(QWidget* parent = nullptr);
     ~AttachDialog();
 
 private slots:
     void on_btnAttach_clicked();
     void on_btnFindWindow_clicked();
     void refresh();
-    void processListContextMenu(QMenu* wMenu);
+    void processListContextMenu(QMenu* menu);
 
 private:
+    void attachToProcess(quint32 pid);
+
     Ui::AttachDialog* ui;
     StdIconSearchListView* mSearchListView;
     QAction* mAttachAction;
@@ -41,5 +42,3 @@ private:
         ColCommandLine,
     };
 };
-
-#endif // ATTACHDIALOG_H

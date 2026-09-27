@@ -1,8 +1,11 @@
 #include "stringutils.h"
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif // WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdint>
 
-static inline bool convertLongLongNumber(const char* str, unsigned long long & result, int radix)
+bool StringUtils::convertLongLongNumber(const char* str, unsigned long long & result, int radix)
 {
     errno = 0;
     char* end;
@@ -16,7 +19,7 @@ static inline bool convertLongLongNumber(const char* str, unsigned long long & r
     return true;
 }
 
-static inline bool convertNumber(const char* str, size_t & result, int radix)
+bool StringUtils::convertNumber(const char* str, size_t & result, int radix)
 {
     unsigned long long llr;
     if(!convertLongLongNumber(str, llr, radix))
@@ -49,6 +52,33 @@ StringList StringUtils::Split(const String & s, char delim)
 {
     std::vector<String> elems;
     Split(s, delim, elems);
+    return elems;
+}
+
+void StringUtils::Split(const String & s, const String & delims, std::vector<String> & elems)
+{
+    elems.clear();
+    String item;
+    item.reserve(s.length());
+    for(size_t i = 0; i < s.length(); i++)
+    {
+        if(delims.find(s[i]) != String::npos)
+        {
+            if(!item.empty())
+                elems.push_back(item);
+            item.clear();
+        }
+        else
+            item.push_back(s[i]);
+    }
+    if(!item.empty())
+        elems.push_back(std::move(item));
+}
+
+StringList StringUtils::Split(const String & s, const String & delims)
+{
+    std::vector<String> elems;
+    Split(s, delims, elems);
     return elems;
 }
 
@@ -395,6 +425,9 @@ String StringUtils::Utf16ToLocalCp(const WString & str)
 //Taken from: https://stackoverflow.com/a/24315631
 void StringUtils::ReplaceAll(String & s, const String & from, const String & to)
 {
+    if(from.empty())
+        return;
+
     size_t start_pos = 0;
     while((start_pos = s.find(from, start_pos)) != std::string::npos)
     {
@@ -405,6 +438,9 @@ void StringUtils::ReplaceAll(String & s, const String & from, const String & to)
 
 void StringUtils::ReplaceAll(WString & s, const WString & from, const WString & to)
 {
+    if(from.empty())
+        return;
+
     size_t start_pos = 0;
     while((start_pos = s.find(from, start_pos)) != std::string::npos)
     {
@@ -477,7 +513,7 @@ String StringUtils::ToLower(const String & s)
 {
     auto result = s;
     for(size_t i = 0; i < result.size(); i++)
-        result[i] = tolower(result[i]);
+        result[i] = ToLower(result[i]);
     return result;
 }
 
@@ -626,7 +662,7 @@ int StringUtils::hackicmp(const char* s1, const char* s2)
         if(c1 == '\0')
             return 0;
     s1--, s2--;
-    while((c1 = tolower(*s1++)) == (c2 = tolower(*s2++)))
+    while((c1 = ToLower(*s1++)) == (c2 = ToLower(*s2++)))
         if(c1 == '\0')
             return 0;
     return c1 - c2;

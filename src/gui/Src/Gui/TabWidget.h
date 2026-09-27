@@ -1,5 +1,4 @@
-#ifndef __MHTABWIDGET_H__
-#define __MHTABWIDGET_H__
+#pragma once
 
 // Qt includes
 #include <QWidget>
@@ -37,8 +36,7 @@ signals:
 public slots:
     void AttachTab(QWidget* parent);
     void DetachTab(int index, const QPoint &);
-    void MoveTab(int fromIndex, int toIndex);
-    void DeleteTab(int index);
+    virtual void DeleteTab(int index);
     void tabMoved(int from, int to);
     void OnDetachFocused(QWidget* parent);
     void currentChanged(int index);
@@ -77,10 +75,11 @@ class MHDetachedWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MHDetachedWindow(QWidget* parent = 0);
+    MHDetachedWindow(QWidget* parent = nullptr);
     ~MHDetachedWindow();
 
     QString mNativeName;
+    int mPreviousIndex = -1;
 
 signals:
     void OnClose(QWidget* widget);
@@ -90,6 +89,3 @@ protected:
     void closeEvent(QCloseEvent* event);
     bool event(QEvent* event);
 };
-
-#endif // __MHTABWIDGET_H__
-

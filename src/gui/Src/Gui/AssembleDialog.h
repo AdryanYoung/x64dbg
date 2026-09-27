@@ -1,5 +1,4 @@
-#ifndef ASSEMBLEDIALOG_H
-#define ASSEMBLEDIALOG_H
+#pragma once
 
 #include <QDialog>
 #include <functional>
@@ -17,7 +16,7 @@ class AssembleDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit AssembleDialog(QWidget* parent = 0);
+    explicit AssembleDialog(QWidget* parent = nullptr);
     ~AssembleDialog();
     QString editText;
     static bool bWarningShowedOnce;
@@ -49,5 +48,3 @@ private:
     duint mSelectedInstrVa;
     ValidateExpressionThread* mValidateThread;
 };
-
-#endif // ASSEMBLEDIALOG_H

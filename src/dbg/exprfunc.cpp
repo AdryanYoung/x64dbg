@@ -11,7 +11,54 @@
 #include "value.h"
 #include "TraceRecord.h"
 #include "exhandlerinfo.h"
+#include "exception.h"
 #include <vector>
+#include <regex>
+#include <string>
+#include <cctype>
+
+/// <summary>
+/// Creates an owning ExpressionValue string
+/// </summary>
+static ExpressionValue ValueString(const char* str)
+{
+    auto len = ::strlen(str);
+    auto buf = (char*)BridgeAlloc(len + 1);
+    memcpy(buf, str, len);
+
+    ExpressionValue value = {};
+    value.type = ValueTypeString;
+    value.string.ptr = buf;
+    value.string.isOwner = true;
+    return value;
+}
+
+/// <summary>
+/// Creates an owning ExpressionValue string
+/// </summary>
+static ExpressionValue ValueString(const String & str)
+{
+    auto len = str.length();
+    auto buf = (char*)BridgeAlloc(len + 1);
+    memcpy(buf, str.c_str(), len);
+
+    ExpressionValue value = {};
+    value.type = ValueTypeString;
+    value.string.ptr = buf;
+    value.string.isOwner = true;
+    return value;
+}
+
+/// <summary>
+/// Creates an owning ExpressionValue number
+/// </summary>
+static ExpressionValue ValueNumber(duint number)
+{
+    ExpressionValue value = {};
+    value.type = ValueTypeNumber;
+    value.number = number;
+    return value;
+}
 
 namespace Exprfunc
 {
@@ -25,7 +72,7 @@ namespace Exprfunc
 
     duint srcdisp(duint addr)
     {
-        DWORD disp;
+        duint disp;
         if(!SymGetSourceLine(addr, nullptr, nullptr, &disp))
             return 0;
         return disp;
@@ -84,6 +131,15 @@ namespace Exprfunc
         return 0;
     }
 
+    bool modbasefromname(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 1);
+        assert(argv[0].type == ValueTypeString);
+
+        *result = ValueNumber(ModBaseFromName(argv[0].string.ptr));
+        return true;
+    }
+
     static duint selstart(GUISELECTIONTYPE hWindow)
     {
         SELECTIONDATA selection;
@@ -118,7 +174,7 @@ namespace Exprfunc
 
     duint tid()
     {
-        return duint(ThreadGetId(hActiveThread));
+        return duint(GetDebugData()->dwThreadId);
     }
 
     duint kusd()
@@ -134,9 +190,11 @@ namespace Exprfunc
         return result;
     }
 
-    duint ternary(duint condition, duint value1, duint value2)
+    bool ternary(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
     {
-        return condition ? value1 : value2;
+        *result = argv[0].number ? argv[1] : argv[2];
+        result->string.isOwner = false;
+        return true;
     }
 
     duint memvalid(duint addr)
@@ -174,6 +232,26 @@ namespace Exprfunc
     {
         auto decoded = ptr;
         return MemDecodePointer(&decoded, IsVistaOrLater()) ? decoded : ptr;
+    }
+
+    bool memmatch(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 2);
+        assert(argv[0].type == ValueTypeNumber);
+        assert(argv[1].type == ValueTypeString);
+
+        std::vector<PatternByte> pattern;
+        if(!patterntransform(argv[1].string.ptr, pattern))
+            return false;
+
+        std::vector<unsigned char> data(pattern.size());
+        if(!MemRead(argv[0].number, data.data(), data.size()))
+            return false;
+
+        *result = ValueNumber(patternfind(data.data(), pattern.size(), pattern) == 0);
+
+
+        return true;
     }
 
     duint dislen(duint addr)
@@ -227,9 +305,9 @@ namespace Exprfunc
         unsigned char data[16];
         if(MemRead(addr, data, sizeof(data), nullptr, true))
         {
-            Zydis cp;
-            if(cp.Disassemble(addr, data))
-                return cp.IsNop();
+            Zydis zydis;
+            if(zydis.Disassemble(addr, data))
+                return zydis.IsNop();
         }
         return false;
     }
@@ -239,9 +317,9 @@ namespace Exprfunc
         unsigned char data[16];
         if(MemRead(addr, data, sizeof(data), nullptr, true))
         {
-            Zydis cp;
-            if(cp.Disassemble(addr, data))
-                return cp.IsUnusual();
+            Zydis zydis;
+            if(zydis.Disassemble(addr, data))
+                return zydis.IsUnusual();
         }
         return false;
     }
@@ -306,6 +384,73 @@ namespace Exprfunc
         return dest && (modsystem(dest) || modsystem(disbranchdest(dest)));
     }
 
+    bool dismnemonic(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 1);
+        assert(argv[0].type == ValueTypeNumber);
+
+        String mnemonic = "???";
+        auto addr = argv[0].number;
+        unsigned char data[MAX_DISASM_BUFFER];
+        if(MemRead(addr, data, sizeof(data)))
+        {
+            Zydis dis;
+            if(dis.Disassemble(addr, data))
+            {
+                mnemonic = dis.Mnemonic();
+            }
+        }
+
+        *result = ValueString(mnemonic);
+        return true;
+    }
+
+    bool distext(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 1);
+        assert(argv[0].type == ValueTypeNumber);
+
+        std::string text = "???";
+        auto addr = argv[0].number;
+        unsigned char data[MAX_DISASM_BUFFER];
+        if(MemRead(addr, data, sizeof(data)))
+        {
+            Zydis dis;
+            if(dis.Disassemble(addr, data))
+            {
+                text = dis.InstructionText();
+            }
+        }
+
+        *result = ValueString(text);
+        return true;
+    }
+
+    bool dismatch(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 2);
+        assert(argv[0].type == ValueTypeNumber);
+        assert(argv[1].type == ValueTypeString);
+
+        bool matched = false;
+        auto addr = argv[0].number;
+        unsigned char data[MAX_DISASM_BUFFER];
+        if(MemRead(addr, data, sizeof(data)))
+        {
+            Zydis dis;
+            if(dis.Disassemble(addr, data))
+            {
+                auto text = dis.InstructionText();
+                std::smatch m;
+                std::regex re(argv[1].string.ptr);
+                matched = std::regex_search(text, m, re);
+            }
+        }
+
+        *result = ValueNumber(matched);
+        return true;
+    }
+
     duint trenabled(duint addr)
     {
         return TraceRecord.getTraceRecordType(addr) != TraceRecordManager::TraceRecordNone;
@@ -316,19 +461,19 @@ namespace Exprfunc
         return trenabled(addr) ? TraceRecord.getHitCount(addr) : 0;
     }
 
-    duint trisruntraceenabled()
+    duint trisrecording()
     {
-        return _dbg_dbgisRunTraceEnabled() ? 1 : 0;
+        return TraceRecord.isTraceRecordingEnabled() ? 1 : 0;
     }
 
     duint gettickcount()
     {
-#ifdef _WIN64
-        static auto GTC64 = (duint(*)())GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetTickCount64");
-        if(GTC64)
-            return GTC64();
-#endif //_WIN64
-        return GetTickCount();
+        return (duint)GetTickCount64();
+    }
+
+    duint rdtsc()
+    {
+        return (duint)__rdtsc();
     }
 
     static duint readMem(duint addr, duint size)
@@ -425,7 +570,7 @@ namespace Exprfunc
 
     duint argget(duint index)
     {
-        duint value;
+        duint value = 0;
         valfromstring(argExpr(index).c_str(), &value);
         return value;
     }
@@ -433,9 +578,9 @@ namespace Exprfunc
     duint argset(duint index, duint value)
     {
         auto expr = argExpr(index);
-        duint oldvalue;
+        duint oldvalue = 0;
         valfromstring(expr.c_str(), &oldvalue);
-        valtostring(expr.c_str(), value, true);
+        valsetscalar(expr.c_str(), value, true);
         return oldvalue;
     }
 
@@ -478,111 +623,368 @@ namespace Exprfunc
         return getLastExceptionInfo().ExceptionRecord.ExceptionInformation[index];
     }
 
-    bool utf16(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    duint isprocessfocused(DWORD process)
     {
-        if(argc > 1 || !argc)
-            return false;
-
-        assert(argv[0].type == ValueTypeNumber);
-        duint addr = argv[0].number;
-
-        std::vector<wchar_t> tempStr(MAX_STRING_SIZE + 1);
-        duint NumberOfBytesRead = 0;
-        if(!MemRead(addr, tempStr.data(), sizeof(wchar_t) * (tempStr.size() - 1), &NumberOfBytesRead) && NumberOfBytesRead == 0)
+        HWND foreground = GetForegroundWindow();
+        if(foreground)
         {
-            return false;
+            DWORD pid;
+            DWORD tid = GetWindowThreadProcessId(foreground, &pid);
+            return pid == process;
         }
-
-        auto utf8Str = StringUtils::Utf16ToUtf8(tempStr.data());
-        if(utf8Str.empty() && wcslen(tempStr.data()) > 0)
-        {
-            return false;
-        }
-
-        auto strBuf = BridgeAlloc(utf8Str.size() + 1);
-        memcpy(strBuf, utf8Str.c_str(), utf8Str.size());
-
-        result->type = ValueTypeString;
-        result->string.ptr = (const char*)strBuf;
-        result->string.isOwner = true;
-
-        return true;
+        else
+            return 0;
     }
 
-    bool utf8(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    duint isdebuggerfocused()
     {
-        if(argc > 1 || !argc)
-            return false;
-
-        assert(argv[0].type == ValueTypeNumber);
-        duint addr = argv[0].number;
-
-        std::vector<char> tempStr(MAX_STRING_SIZE + 1);
-        duint NumberOfBytesRead = 0;
-        if(!MemRead(addr, tempStr.data(), tempStr.size() - 1, &NumberOfBytesRead) && NumberOfBytesRead == 0)
-        {
-            return false;
-        }
-
-        auto strlen = ::strlen(tempStr.data());
-        auto strBuf = BridgeAlloc(strlen + 1);
-        memcpy(strBuf, tempStr.data(), strlen + 1);
-
-        result->type = ValueTypeString;
-        result->string.ptr = (const char*)strBuf;
-        result->string.isOwner = true;
-
-        return true;
-
+        return isprocessfocused(GetCurrentProcessId());
     }
 
-    bool modbasefromname(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    duint isdebuggeefocused()
     {
-        result->type = ValueTypeNumber;
-        result->number = ModBaseFromName(argv[0].string.ptr);
-
-        if(!result->number)
-            return false;
-
-        return true;
+        if(!DbgIsDebugging())
+            return 0;
+        return isprocessfocused(fdProcessInfo->dwProcessId);
     }
 
-    bool strcmp(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    bool streq(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
     {
+        assert(argc == 2);
         assert(argv[0].type == ValueTypeString);
-        result->type = ValueTypeNumber;
-        result->number = 0;
+        assert(argv[1].type == ValueTypeString);
 
-        if(argc > 2 || argc <= 1)
-            return false;
+        *result = ValueNumber(::strcmp(argv[0].string.ptr, argv[1].string.ptr) == 0);
+        return true;
+    }
 
-        result->number = !::strcmp(argv[0].string.ptr, argv[1].string.ptr);
+    bool strieq(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 2);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+
+        *result = ValueNumber(::_stricmp(argv[0].string.ptr, argv[1].string.ptr) == 0);
         return true;
     }
 
     bool strstr(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
     {
+        assert(argc == 2);
         assert(argv[0].type == ValueTypeString);
-        result->type = ValueTypeNumber;
-        result->number = 0;
+        assert(argv[1].type == ValueTypeString);
 
-        if(argc > 2 || argc <= 1)
-            return false;
+        *result = ValueNumber(::strstr(argv[0].string.ptr, argv[1].string.ptr) != nullptr);
+        return true;
+    }
 
-        result->number = ::strstr(argv[0].string.ptr, argv[1].string.ptr) != nullptr;
+    bool stristr(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 2);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+
+        size_t len1 = ::strlen(argv[0].string.ptr);
+        size_t len2 = ::strlen(argv[1].string.ptr);
+        auto lowercompare = [](char ch1, char ch2)
+        {
+            return StringUtils::ToLower(ch1) == StringUtils::ToLower(ch2);
+        };
+        auto found = std::search(
+                         argv[0].string.ptr, argv[0].string.ptr + len1,
+                         argv[1].string.ptr, argv[1].string.ptr + len2,
+                         lowercompare
+                     ) != argv[0].string.ptr + len1;
+
+        *result = ValueNumber(found);
         return true;
     }
 
     bool strlen(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
     {
+        assert(argc == 1);
         assert(argv[0].type == ValueTypeString);
-        result->type = ValueTypeNumber;
-        result->number = 0;
 
-        if(argc != 1)
+        *result = ValueNumber(::strlen(argv[0].string.ptr));
+        return true;
+    }
+
+    template<bool Strict, typename T>
+    bool readstring(std::vector<T> & temp, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc >= 1);
+        assert(argv[0].type == ValueTypeNumber);
+
+        duint addr = argv[0].number;
+
+        auto truncate = argc > 1;
+        if(truncate)
+        {
+            assert(argv[1].type == ValueTypeNumber);
+            if(argv[1].number >= temp.max_size())
+                return false;
+            temp.resize(size_t(argv[1].number) + 1);
+        }
+        else
+        {
+            // TODO: check for null-termination and resize accordingly
+            temp.resize(MAX_STRING_SIZE + 1);
+        }
+
+        duint NumberOfBytesRead = 0;
+        if(!MemRead(addr, temp.data(), temp.size() - 1, &NumberOfBytesRead) && NumberOfBytesRead == 0 && Strict)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    template<bool Strict>
+    bool ansi(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        std::vector<char> temp;
+        if(!readstring<Strict>(temp, argc, argv, userdata))
             return false;
 
-        result->number = ::strlen(argv[0].string.ptr);
+        *result = ValueString(StringUtils::LocalCpToUtf8(temp.data()));
+        return true;
+    }
+
+    template<bool Strict>
+    bool utf8(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        std::vector<char> temp;
+        if(!readstring<Strict>(temp, argc, argv, userdata))
+            return false;
+
+        *result = ValueString(temp.data());
+        return true;
+    }
+
+    template<bool Strict>
+    bool utf16(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        std::vector<wchar_t> temp;
+        if(!readstring<Strict>(temp, argc, argv, userdata))
+            return false;
+
+        auto utf8Str = StringUtils::Utf16ToUtf8(temp.data());
+        if(utf8Str.empty() && wcslen(temp.data()) > 0)
+            return false;
+
+        *result = ValueString(utf8Str);
+        return true;
+    }
+
+    bool ansi(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        return ansi<false>(result, argc, argv, userdata);
+    }
+
+    bool ansi_strict(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        return ansi<true>(result, argc, argv, userdata);
+    }
+
+    bool utf8(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        return utf8<false>(result, argc, argv, userdata);
+    }
+
+    bool utf8_strict(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        return utf8<true>(result, argc, argv, userdata);
+    }
+
+    bool utf16(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        return utf16<false>(result, argc, argv, userdata);
+    }
+
+    bool utf16_strict(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        return utf16<true>(result, argc, argv, userdata);
+    }
+
+    bool syscall_name(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        *result = ValueString(SyscallToName((unsigned int)argv[0].number));
+        return true;
+    }
+
+    bool syscall_id(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        auto id = SyscallToId(argv[0].string.ptr);
+        if(id == -1)
+            return false;
+
+        *result = ValueNumber(id);
+        return true;
+    }
+
+    bool strlower(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 1);
+        assert(argv[0].type == ValueTypeString);
+
+        *result = ValueString(StringUtils::ToLower(argv[0].string.ptr));
+        return true;
+    }
+
+    bool strupper(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 1);
+        assert(argv[0].type == ValueTypeString);
+
+        String str = argv[0].string.ptr;
+        for(auto & ch : str)
+            ch = toupper(ch);
+
+        *result = ValueString(str);
+        return true;
+    }
+
+    bool strcat(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 2);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+
+        String str = argv[0].string.ptr;
+        str += argv[1].string.ptr;
+
+        *result = ValueString(str);
+        return true;
+    }
+
+    bool substr(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc >= 2 && argc <= 3);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeNumber);
+
+        String str = argv[0].string.ptr;
+        size_t start = (size_t)argv[1].number;
+
+        if(start >= str.length())
+        {
+            *result = ValueString("");
+            return true;
+        }
+
+        size_t length = str.length() - start;
+        if(argc == 3)
+        {
+            assert(argv[2].type == ValueTypeNumber);
+            length = std::min(length, (size_t)argv[2].number);
+        }
+
+        *result = ValueString(str.substr(start, length));
+        return true;
+    }
+
+    bool strchr(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 2);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+
+        String str = argv[0].string.ptr;
+        String needle = argv[1].string.ptr;
+
+        size_t pos = str.find(needle);
+        *result = ValueNumber(pos == String::npos ? -1 : (duint)pos);
+        return true;
+    }
+
+    bool strrchr(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 2);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+
+        String str = argv[0].string.ptr;
+        String needle = argv[1].string.ptr;
+
+        size_t pos = str.rfind(needle);
+        *result = ValueNumber(pos == String::npos ? -1 : (duint)pos);
+        return true;
+    }
+
+    bool strreplace(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 3);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+        assert(argv[2].type == ValueTypeString);
+
+        String str = argv[0].string.ptr;
+        String from = argv[1].string.ptr;
+        String to = argv[2].string.ptr;
+
+        StringUtils::ReplaceAll(str, from, to);
+        *result = ValueString(str);
+        return true;
+    }
+
+    bool strreplace_first(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 3);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+        assert(argv[2].type == ValueTypeString);
+
+        String str = argv[0].string.ptr;
+        String from = argv[1].string.ptr;
+        String to = argv[2].string.ptr;
+
+        size_t pos = str.find(from);
+        if(pos != String::npos)
+            str.replace(pos, from.length(), to);
+
+        *result = ValueString(str);
+        return true;
+    }
+
+    bool strreplace_last(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 3);
+        assert(argv[0].type == ValueTypeString);
+        assert(argv[1].type == ValueTypeString);
+        assert(argv[2].type == ValueTypeString);
+
+        String str = argv[0].string.ptr;
+        String from = argv[1].string.ptr;
+        String to = argv[2].string.ptr;
+
+        size_t pos = str.rfind(from);
+        if(pos != String::npos)
+            str.replace(pos, from.length(), to);
+
+        *result = ValueString(str);
+        return true;
+    }
+
+    bool streval(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 1);
+        assert(argv[0].type == ValueTypeString);
+
+        duint value;
+        if(!valfromstring(argv[0].string.ptr, &value))
+            return false;
+
+        *result = ValueNumber(value);
+        return true;
+    }
+
+    bool strtrim(ExpressionValue* result, int argc, const ExpressionValue* argv, void* userdata)
+    {
+        assert(argc == 1);
+        assert(argv[0].type == ValueTypeString);
+
+        *result = ValueString(StringUtils::Trim(argv[0].string.ptr));
         return true;
     }
 }

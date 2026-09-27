@@ -7,23 +7,26 @@
 
 std::unordered_map<String, ExpressionFunctions::Function> ExpressionFunctions::mFunctions;
 
-//Copied from https://stackoverflow.com/a/7858971/1806760
-template<int...>
-struct seq {};
-
-template<int N, int... S>
-struct gens : gens < N - 1, N - 1, S... > {};
-
-template<int... S>
-struct gens<0, S...>
+namespace tmp
 {
-    typedef seq<S...> type;
-};
+    //Copied from https://stackoverflow.com/a/7858971/1806760
+    template<int...>
+    struct seq {};
 
-template<typename T, int ...S, typename... Ts>
-static duint callFunc(const T* argv, duint(*cbFunction)(Ts...), seq<S...>)
-{
-    return cbFunction(argv[S].number...);
+    template<int N, int... S>
+    struct gens : gens < N - 1, N - 1, S... > {};
+
+    template<int... S>
+    struct gens<0, S...>
+    {
+        typedef seq<S...> type;
+    };
+
+    template<typename T, int ...S, typename... Ts>
+    static duint callFunc(const T* argv, duint(*cbFunction)(Ts...), seq<S...>)
+    {
+        return cbFunction(argv[S].number...);
+    }
 }
 
 template<typename... Ts>
@@ -32,7 +35,7 @@ static bool RegisterEasy(const String & name, duint(*cbFunction)(Ts...))
     auto tempFunc = [cbFunction](ExpressionValue * result, int argc, const ExpressionValue * argv, void* userdata) -> bool
     {
         result->type = ValueTypeNumber;
-        result->number = callFunc(argv, cbFunction, typename gens<sizeof...(Ts)>::type());
+        result->number = callFunc(argv, cbFunction, typename tmp::gens<sizeof...(Ts)>::type());
 
         return true;
     };
@@ -71,6 +74,7 @@ void ExpressionFunctions::Init()
     RegisterEasy("mod.offset,mod.fileoffset", valvatofileoffset);
     RegisterEasy("mod.headerva", modheaderva);
     RegisterEasy("mod.isexport", modisexport);
+    ExpressionFunctions::Register("mod.fromname", ValueTypeNumber, { ValueTypeString }, Exprfunc::modbasefromname);
 
     //Process information
     RegisterEasy("peb,PEB", peb);
@@ -80,8 +84,9 @@ void ExpressionFunctions::Init()
 
     //General purpose
     RegisterEasy("bswap", bswap);
-    RegisterEasy("ternary,tern", ternary);
+    ExpressionFunctions::Register("ternary,tern", ValueTypeAny, { ValueTypeNumber, ValueTypeAny, ValueTypeAny }, ternary);
     RegisterEasy("GetTickCount,gettickcount", gettickcount);
+    RegisterEasy("rdtsc", rdtsc);
 
     //Memory
     RegisterEasy("mem.valid,mem.isvalid", memvalid);
@@ -90,6 +95,7 @@ void ExpressionFunctions::Init()
     RegisterEasy("mem.iscode", memiscode);
     RegisterEasy("mem.isstring", memisstring);
     RegisterEasy("mem.decodepointer", memdecodepointer);
+    ExpressionFunctions::Register("mem.match", ValueTypeNumber, {ValueTypeNumber, ValueTypeString}, memmatch);
 
     //Disassembly
     RegisterEasy("dis.len,dis.size", dislen);
@@ -108,11 +114,14 @@ void ExpressionFunctions::Init()
     RegisterEasy("dis.next", disnext);
     RegisterEasy("dis.prev", disprev);
     RegisterEasy("dis.iscallsystem", disiscallsystem);
+    ExpressionFunctions::Register("dis.mnemonic", ValueTypeString, { ValueTypeNumber }, dismnemonic);
+    ExpressionFunctions::Register("dis.text", ValueTypeString, { ValueTypeNumber }, distext);
+    ExpressionFunctions::Register("dis.match", ValueTypeNumber, { ValueTypeNumber, ValueTypeString }, dismatch);
 
     //Trace record
     RegisterEasy("tr.enabled", trenabled);
     RegisterEasy("tr.hitcount,tr.count", trhitcount);
-    RegisterEasy("tr.runtraceenabled", trisruntraceenabled);
+    RegisterEasy("tr.isrecording,tr.runtraceenabled", trisrecording);
 
     //Byte/Word/Dword/Qword/Pointer
     RegisterEasy("ReadByte,Byte,byte", readbyte);
@@ -129,7 +138,7 @@ void ExpressionFunctions::Init()
 
     //References
     RegisterEasy("ref.count", refcount);
-    RegisterEasy("ref.addr", refaddr);
+    RegisterEasy("ref.addr,ref", refaddr);
     RegisterEasy("refsearch.count", refsearchcount);
     RegisterEasy("refsearch.addr", refsearchaddr);
 
@@ -148,12 +157,37 @@ void ExpressionFunctions::Init()
     //Undocumented
     RegisterEasy("bpgoto", bpgoto);
 
-    ExpressionFunctions::Register("streq", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::strcmp, nullptr);
-    ExpressionFunctions::Register("strstr", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::strstr, nullptr);
-    ExpressionFunctions::Register("strlen", ValueTypeNumber, { ValueTypeString }, Exprfunc::strlen, nullptr);
-    ExpressionFunctions::Register("utf16", ValueTypeString, { ValueTypeNumber }, Exprfunc::utf16, nullptr);
-    ExpressionFunctions::Register("utf8", ValueTypeString, { ValueTypeNumber }, Exprfunc::utf8, nullptr);
-    ExpressionFunctions::Register("mod.fromname", ValueTypeNumber, { ValueTypeString }, Exprfunc::modbasefromname, nullptr);
+    //Other
+    RegisterEasy("isdebuggerfocused", isdebuggerfocused);
+    RegisterEasy("isdebuggeefocused", isdebuggeefocused);
+
+    // Strings
+    ExpressionFunctions::Register("ansi", ValueTypeString, { ValueTypeNumber, ValueTypeOptionalNumber }, Exprfunc::ansi);
+    ExpressionFunctions::Register("ansi.strict", ValueTypeString, { ValueTypeNumber, ValueTypeOptionalNumber }, Exprfunc::ansi_strict);
+    ExpressionFunctions::Register("utf8", ValueTypeString, { ValueTypeNumber, ValueTypeOptionalNumber }, Exprfunc::utf8);
+    ExpressionFunctions::Register("utf8.strict", ValueTypeString, { ValueTypeNumber, ValueTypeOptionalNumber }, Exprfunc::utf8_strict);
+    ExpressionFunctions::Register("utf16", ValueTypeString, { ValueTypeNumber, ValueTypeOptionalNumber }, Exprfunc::utf16);
+    ExpressionFunctions::Register("utf16.strict", ValueTypeString, { ValueTypeNumber, ValueTypeOptionalNumber }, Exprfunc::utf16_strict);
+    ExpressionFunctions::Register("strstr,strcontains", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::strstr);
+    ExpressionFunctions::Register("stristr,stricontains", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::stristr);
+    ExpressionFunctions::Register("streq", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::streq);
+    ExpressionFunctions::Register("strieq", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::strieq);
+    ExpressionFunctions::Register("strlen", ValueTypeNumber, { ValueTypeString }, Exprfunc::strlen);
+    ExpressionFunctions::Register("strlower", ValueTypeString, { ValueTypeString }, Exprfunc::strlower);
+    ExpressionFunctions::Register("strupper", ValueTypeString, { ValueTypeString }, Exprfunc::strupper);
+    ExpressionFunctions::Register("strcat", ValueTypeString, { ValueTypeString, ValueTypeString }, Exprfunc::strcat);
+    ExpressionFunctions::Register("substr", ValueTypeString, { ValueTypeString, ValueTypeNumber, ValueTypeOptionalNumber }, Exprfunc::substr);
+    ExpressionFunctions::Register("strchr", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::strchr);
+    ExpressionFunctions::Register("strrchr", ValueTypeNumber, { ValueTypeString, ValueTypeString }, Exprfunc::strrchr);
+    ExpressionFunctions::Register("strreplace", ValueTypeString, { ValueTypeString, ValueTypeString, ValueTypeString }, Exprfunc::strreplace);
+    ExpressionFunctions::Register("strreplace_first", ValueTypeString, { ValueTypeString, ValueTypeString, ValueTypeString }, Exprfunc::strreplace_first);
+    ExpressionFunctions::Register("strreplace_last", ValueTypeString, { ValueTypeString, ValueTypeString, ValueTypeString }, Exprfunc::strreplace_last);
+    ExpressionFunctions::Register("streval", ValueTypeNumber, { ValueTypeString }, Exprfunc::streval);
+    ExpressionFunctions::Register("strtrim", ValueTypeString, { ValueTypeString }, Exprfunc::strtrim);
+    // str.endswith, str.startswith, str.find, str.rfind
+
+    ExpressionFunctions::Register("syscall.name", ValueTypeString, { ValueTypeNumber }, Exprfunc::syscall_name);
+    ExpressionFunctions::Register("syscall.id", ValueTypeNumber, { ValueTypeString }, Exprfunc::syscall_id);
 }
 
 bool ExpressionFunctions::Register(const String & name, const ValueType & returnType, const std::vector<ValueType> & argTypes, const CBEXPRESSIONFUNCTION & cbFunction, void* userdata)
@@ -165,10 +199,39 @@ bool ExpressionFunctions::Register(const String & name, const ValueType & return
     if(mFunctions.count(aliases[0]))
         return false;
 
+    // Return type cannot be optional
+    switch(returnType)
+    {
+    case ValueTypeOptionalNumber:
+    case ValueTypeOptionalString:
+    case ValueTypeOptionalAny:
+        return false;
+    default:
+        break;
+    }
+
+    // Make sure optional arguments are at the end
+    bool seenOptional = false;
+    for(const auto & argType : argTypes)
+    {
+        switch(argType)
+        {
+        case ValueTypeOptionalNumber:
+        case ValueTypeOptionalString:
+        case ValueTypeOptionalAny:
+            seenOptional = true;
+            break;
+        default:
+            if(seenOptional)
+                return false;
+            break;
+        }
+    }
+
     Function f;
     f.name = aliases[0];
-    f.argTypes = argTypes;
     f.returnType = returnType;
+    f.argTypes = argTypes;
     f.cbFunction = cbFunction;
     f.userdata = userdata;
     mFunctions[aliases[0]] = f;
@@ -201,7 +264,7 @@ bool ExpressionFunctions::Unregister(const String & name)
         return false;
     auto aliases = found->second.aliases;
     mFunctions.erase(found);
-    for(const auto & alias : found->second.aliases)
+    for(const auto & alias : aliases)
         Unregister(alias);
     return true;
 }
@@ -213,14 +276,7 @@ bool ExpressionFunctions::Call(const String & name, ExpressionValue & result, st
     if(found == mFunctions.end())
         return false;
     const auto & f = found->second;
-    if(f.argTypes.size() != int(argv.size()))
-        return false;
-    for(size_t i = 0; i < argv.size(); i++)
-    {
-        if(argv[i].type != f.argTypes[i] && f.argTypes[i] != ValueTypeAny)
-            return false;
-    }
-    return f.cbFunction(&result, argv.size(), argv.data(), f.userdata);
+    return f.cbFunction(&result, (int)argv.size(), argv.data(), f.userdata);
 }
 
 bool ExpressionFunctions::GetType(const String & name, ValueType & returnType, std::vector<ValueType> & argTypes)

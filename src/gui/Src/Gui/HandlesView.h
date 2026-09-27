@@ -1,5 +1,4 @@
-#ifndef HANDLESVIEW_H
-#define HANDLESVIEW_H
+#pragma once
 
 #include <QWidget>
 #include "Imports.h"
@@ -23,8 +22,8 @@ public slots:
     void refreshShortcuts();
     void dbgStateChanged(DBGSTATE state);
 
-    void handlesTableContextMenuSlot(QMenu* wMenu);
-    void tcpConnectionsTableContextMenuSlot(QMenu* wMenu);
+    void handlesTableContextMenuSlot(QMenu* menu);
+    void tcpConnectionsTableContextMenuSlot(QMenu* menu);
     void windowsTableContextMenuSlot(QMenu*);
     void privilegesTableContextMenuSlot(const QPoint & pos);
 
@@ -35,7 +34,9 @@ public slots:
     void enableAllPrivilegesSlot();
     void enableWindowSlot();
     void disableWindowSlot();
+    void focusWindowSlot();
     void followInDisasmSlot();
+    void followInThreads();
     void toggleBPSlot();
     void messagesBPSlot();
 
@@ -56,7 +57,9 @@ private:
     QAction* mActionEnableAllPrivileges;
     QAction* mActionEnableWindow;
     QAction* mActionDisableWindow;
+    QAction* mActionFocusWindow;
     QAction* mActionFollowProc;
+    QAction* mActionFollowThread;
     QAction* mActionToggleProcBP;
     QAction* mActionMessageProcBP;
 
@@ -66,5 +69,3 @@ private:
     //void enumHeaps();
     void enumPrivileges();
 };
-
-#endif // HANDLESVIEW_H

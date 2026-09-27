@@ -17,7 +17,7 @@ bool MemPatch(duint BaseAddress, const void* Buffer, duint Size, duint* NumberOf
 bool MemIsValidReadPtr(duint Address, bool cache = false);
 bool MemIsValidReadPtrUnsafe(duint Address, bool cache = false);
 bool MemIsCanonicalAddress(duint Address);
-bool MemIsCodePage(duint Address, bool Refresh);
+bool MemIsCodePage(duint Address, bool SkipCache);
 duint MemAllocRemote(duint Address, duint Size, DWORD Type = MEM_RESERVE | MEM_COMMIT, DWORD Protect = PAGE_EXECUTE_READWRITE);
 bool MemFreeRemote(duint Address);
 bool MemGetPageInfo(duint Address, MEMPAGE* PageInfo, bool Refresh = false);
@@ -30,6 +30,8 @@ bool MemFindInMap(const std::vector<SimplePage> & pages, const std::vector<Patte
 bool MemDecodePointer(duint* Pointer, bool vistaPlus);
 void MemInitRemoteProcessCookie(ULONG cookie);
 bool MemReadDumb(duint BaseAddress, void* Buffer, duint Size);
+bool MemGetProtect(duint Address, bool Reserved, bool Cache, unsigned int* Protect);
+bool MemSetProtect(duint Address, unsigned int Protection, duint Size);
 
 #include "addrinfo.h"
 

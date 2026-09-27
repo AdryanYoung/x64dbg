@@ -1,5 +1,4 @@
-#ifndef BACKGROUNDFLICKERTHREAD_H
-#define BACKGROUNDFLICKERTHREAD_H
+#pragma once
 
 #include <QThread>
 #include <QWidget>
@@ -9,7 +8,7 @@ class BackgroundFlickerThread : public QThread
 {
     Q_OBJECT
 public:
-    explicit BackgroundFlickerThread(QWidget* widget, QColor & background, QObject* parent = 0);
+    explicit BackgroundFlickerThread(QWidget* widget, QColor & background, QObject* parent = nullptr);
     void setProperties(int count = 3, int delay = 300);
 
 private:
@@ -19,5 +18,3 @@ private:
     int count;
     int delay;
 };
-
-#endif // BACKGROUNDFLICKERTHREAD_H

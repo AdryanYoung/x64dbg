@@ -1,5 +1,4 @@
-#ifndef HISTORYLINEEDIT_H
-#define HISTORYLINEEDIT_H
+#pragma once
 
 #include <QLineEdit>
 #include <QKeyEvent>
@@ -8,7 +7,7 @@ class HistoryLineEdit : public QLineEdit
 {
     Q_OBJECT
 public:
-    explicit HistoryLineEdit(QWidget* parent = 0);
+    explicit HistoryLineEdit(QWidget* parent = nullptr);
     void keyPressEvent(QKeyEvent* event);
     void addLineToHistory(QString parLine);
     QString getLineFromHistory();
@@ -27,5 +26,3 @@ private:
     bool bSixPressed;
 
 };
-
-#endif // HISTORYLINEEDIT_H

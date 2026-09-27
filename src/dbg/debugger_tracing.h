@@ -89,7 +89,7 @@ struct TraceState
             }
         }
         else
-            dprintf_untranslated("%s\n", text.c_str());
+            dputs_untranslated(text.c_str());
     }
 
     bool IsActive() const
@@ -139,40 +139,27 @@ struct TraceState
     {
         delete cmdCondition;
         cmdCondition = nullptr;
+        // An empty expression means the command condition defaults to the break
+        // condition. The trace condition is not initialized yet at this point
+        // (TraceSetCommand executes before the trace is started), so the break
+        // condition evaluated during the trace is used in EvaluateCmd instead.
+        cmdConditionDefault = expression.empty();
         if(text.empty())
             return true;
-        if(expression.empty())
-        {
-            cmdCondition = new TextCondition(traceCondition->condition.GetExpression(), text);
-        }
-        else
-            cmdCondition = new TextCondition(expression, text);
+        cmdCondition = new TextCondition(cmdConditionDefault ? "1" : expression, text);
         return cmdCondition->condition.IsValidExpression();
     }
 
     char EvaluateCmd(char defaultValue) const
     {
-        return cmdCondition ? cmdCondition->Evaluate() : defaultValue;
+        if(cmdCondition == nullptr || cmdConditionDefault)
+            return defaultValue;
+        return cmdCondition->Evaluate();
     }
 
     const String & CmdText() const
     {
         return cmdCondition ? cmdCondition->text : emptyString;
-    }
-
-    bool InitSwitchCondition(const String & expression)
-    {
-        delete switchCondition;
-        switchCondition = nullptr;
-        if(expression.empty())
-            return true;
-        switchCondition = new TextCondition(expression, "");
-        return switchCondition->condition.IsValidExpression();
-    }
-
-    char EvaluateSwitch() const
-    {
-        return switchCondition ? switchCondition->Evaluate() : 0;
     }
 
     void SetLogFile(const char* fileName)
@@ -190,6 +177,16 @@ struct TraceState
         forceBreakTrace = true;
     }
 
+    void SetPartyFilter(int party)
+    {
+        partyFilter = party;
+    }
+
+    int GetPartyFilter() const
+    {
+        return partyFilter;
+    }
+
     void Clear()
     {
         delete traceCondition;
@@ -198,23 +195,24 @@ struct TraceState
         logCondition = nullptr;
         delete cmdCondition;
         cmdCondition = nullptr;
-        delete switchCondition;
-        switchCondition = nullptr;
+        cmdConditionDefault = false;
         logFile.clear();
         delete logWriter;
         logWriter = nullptr;
         writeUtf16 = false;
         forceBreakTrace = false;
+        partyFilter = -1;
     }
 
 private:
     TraceCondition* traceCondition = nullptr;
     TextCondition* logCondition = nullptr;
     TextCondition* cmdCondition = nullptr;
-    TextCondition* switchCondition = nullptr;
+    bool cmdConditionDefault = false;
     String emptyString;
     WString logFile;
     BufferedWriter* logWriter = nullptr;
     bool writeUtf16 = false;
     bool forceBreakTrace = false;
+    int partyFilter = -1;  // -1 = none, mod_user = 0, mod_system = 1
 };

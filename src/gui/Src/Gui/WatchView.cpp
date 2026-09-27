@@ -33,7 +33,7 @@ void WatchView::updateWatch()
     BridgeList<WATCHINFO> WatchList;
     DbgGetWatchList(&WatchList);
     setRowCount(WatchList.Count());
-    if(getInitialSelection() >= WatchList.Count() && WatchList.Count() > 0)
+    if(getInitialSelection() >= (duint)WatchList.Count() && WatchList.Count() > 0)
         setSingleSelection(WatchList.Count() - 1);
     for(int i = 0; i < WatchList.Count(); i++)
     {
@@ -148,31 +148,31 @@ void WatchView::setupContextMenu()
     };
     mMenu->addAction(makeAction(tr("&Add..."), SLOT(addWatchSlot())));
     mMenu->addAction(makeShortcutAction(tr("&Delete"), SLOT(delWatchSlot()), "ActionDeleteBreakpoint"), nonEmptyFunc);
-    mMenu->addAction(makeAction(DIcon("labels.png"), tr("Rename"), SLOT(renameWatchSlot())), nonEmptyFunc);
-    mMenu->addAction(makeAction(DIcon("modify.png"), tr("&Edit..."), SLOT(editWatchSlot())), nonEmptyFunc);
-    mMenu->addAction(makeAction(DIcon("modify.png"), tr("&Modify..."), SLOT(modifyWatchSlot())), nonEmptyFunc);
+    mMenu->addAction(makeAction(DIcon("labels"), tr("Rename"), SLOT(renameWatchSlot())), nonEmptyFunc);
+    mMenu->addAction(makeAction(DIcon("modify"), tr("&Edit..."), SLOT(editWatchSlot())), nonEmptyFunc);
+    mMenu->addAction(makeAction(DIcon("modify"), tr("&Modify..."), SLOT(modifyWatchSlot())), nonEmptyFunc);
     MenuBuilder* watchdogBuilder = new MenuBuilder(this, nonEmptyFunc);
     QMenu* watchdogMenu = new QMenu(tr("Watchdog"), this);
-    watchdogMenu->setIcon(DIcon("animal-dog.png"));
-    watchdogBuilder->addAction(makeAction(DIcon("disable.png"), tr("Disabled"), SLOT(watchdogDisableSlot())));
+    watchdogMenu->setIcon(DIcon("animal-dog"));
+    watchdogBuilder->addAction(makeAction(DIcon("disable"), tr("Disabled"), SLOT(watchdogDisableSlot())));
     watchdogBuilder->addSeparator();
-    watchdogBuilder->addAction(makeAction(DIcon("arrow-restart.png"), tr("Changed"), SLOT(watchdogChangedSlot())));
-    watchdogBuilder->addAction(makeAction(DIcon("control-pause.png"), tr("Not changed"), SLOT(watchdogUnchangedSlot())));
-    watchdogBuilder->addAction(makeAction(DIcon("treat_selection_as_tbyte.png"), tr("Is true"), SLOT(watchdogIsTrueSlot()))); // TODO: better icon
-    watchdogBuilder->addAction(makeAction(DIcon("treat_selection_as_fword.png"), tr("Is false"), SLOT(watchdogIsFalseSlot())));
+    watchdogBuilder->addAction(makeAction(DIcon("arrow-restart"), tr("Changed"), SLOT(watchdogChangedSlot())));
+    watchdogBuilder->addAction(makeAction(DIcon("control-pause"), tr("Not changed"), SLOT(watchdogUnchangedSlot())));
+    watchdogBuilder->addAction(makeAction(DIcon("treat_selection_as_tbyte"), tr("Is true"), SLOT(watchdogIsTrueSlot()))); // TODO: better icon
+    watchdogBuilder->addAction(makeAction(DIcon("treat_selection_as_fword"), tr("Is false"), SLOT(watchdogIsFalseSlot())));
     mMenu->addMenu(watchdogMenu, watchdogBuilder);
     MenuBuilder* typeBuilder = new MenuBuilder(this, nonEmptyFunc);
     QMenu* typeMenu = new QMenu(tr("Type"), this);
-    typeBuilder->addAction(makeAction(DIcon("integer.png"), tr("Uint"), SLOT(setTypeUintSlot())));
-    typeBuilder->addAction(makeAction(DIcon("integer.png"), tr("Int"), SLOT(setTypeIntSlot())));
-    typeBuilder->addAction(makeAction(DIcon("float.png"), tr("Float"), SLOT(setTypeFloatSlot())));
-    typeBuilder->addAction(makeAction(DIcon("ascii.png"), tr("Ascii"), SLOT(setTypeAsciiSlot())));
-    typeBuilder->addAction(makeAction(DIcon("ascii-extended.png"), tr("Unicode"), SLOT(setTypeUnicodeSlot())));
+    typeBuilder->addAction(makeAction(DIcon("integer"), tr("Uint"), SLOT(setTypeUintSlot())));
+    typeBuilder->addAction(makeAction(DIcon("integer"), tr("Int"), SLOT(setTypeIntSlot())));
+    typeBuilder->addAction(makeAction(DIcon("float"), tr("Float"), SLOT(setTypeFloatSlot())));
+    typeBuilder->addAction(makeAction(DIcon("ascii"), tr("Ascii"), SLOT(setTypeAsciiSlot())));
+    typeBuilder->addAction(makeAction(DIcon("ascii-extended"), tr("Unicode"), SLOT(setTypeUnicodeSlot())));
     mMenu->addMenu(typeMenu, typeBuilder);
     mMenu->addSeparator();
     MenuBuilder* copyMenu = new MenuBuilder(this);
     setupCopyMenu(copyMenu);
-    mMenu->addMenu(makeMenu(DIcon("copy.png"), tr("&Copy")), copyMenu);
+    mMenu->addMenu(makeMenu(DIcon("copy"), tr("&Copy")), copyMenu);
     mMenu->loadFromConfig();
 }
 
@@ -181,10 +181,9 @@ QString WatchView::getSelectedId()
     return QChar('.') + getCellContent(getInitialSelection(), ColId);
 }
 
-QString WatchView::paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h)
+QString WatchView::paintContent(QPainter* painter, duint row, duint col, int x, int y, int w, int h)
 {
-    QString ret = StdTable::paintContent(painter, rowBase, rowOffset, col, x, y, w, h);
-    const dsint row = rowBase + rowOffset;
+    QString ret = StdTable::paintContent(painter, row, col, x, y, w, h);
     if(row != getInitialSelection() && DbgFunctions()->WatchIsWatchdogTriggered(getCellContent(row, ColId).toUInt()))
     {
         painter->fillRect(QRect(x, y, w, h), mWatchTriggeredBackgroundColor);
@@ -200,16 +199,16 @@ QString WatchView::paintContent(QPainter* painter, dsint rowBase, int rowOffset,
 
 void WatchView::contextMenuSlot(const QPoint & pos)
 {
-    QMenu wMenu(this);
-    mMenu->build(&wMenu);
-    wMenu.exec(mapToGlobal(pos));
+    QMenu menu(this);
+    mMenu->build(&menu);
+    menu.exec(mapToGlobal(pos));
 }
 
 void WatchView::addWatchSlot()
 {
     QString name;
     if(SimpleInputBox(this, tr("Enter the expression to watch"), "", name, tr("Example: [EAX]")))
-        DbgCmdExecDirect(QString("AddWatch ").append(name));
+        DbgCmdExecDirect(QString("AddWatch \"%1\"").arg(DbgCmdEscape(name)));
     updateWatch();
 }
 
@@ -224,7 +223,7 @@ void WatchView::renameWatchSlot()
     QString name;
     QString originalName = getCellContent(getInitialSelection(), ColName);
     if(SimpleInputBox(this, tr("Enter the name of the watch variable"), originalName, name, originalName))
-        DbgCmdExecDirect(QString("SetWatchName ").append(getSelectedId() + "," + name));
+        DbgCmdExecDirect(QString("SetWatchName %1, \"%2\"").arg(getSelectedId(), DbgCmdEscape(name)));
     updateWatch();
 }
 
@@ -233,13 +232,13 @@ void WatchView::modifyWatchSlot()
     BridgeList<WATCHINFO> WatchList;
     DbgGetWatchList(&WatchList);
     auto sel = getInitialSelection();
-    if(sel > WatchList.Count())
+    if(sel > (duint)WatchList.Count())
         return;
     WordEditDialog modifyDialog(this);
     modifyDialog.setup(tr("Modify \"%1\"").arg(QString(WatchList[sel].WatchName)), WatchList[sel].value, sizeof(duint));
     if(modifyDialog.exec() == QDialog::Accepted)
     {
-        if(!DbgValToString(WatchList[sel].Expression, modifyDialog.getVal()))
+        if(!DbgValSetScalar(WatchList[sel].Expression, modifyDialog.getVal()))
             SimpleErrorBox(this, tr("Cannot modify \"%1\"").arg(QString(WatchList[sel].WatchName)), tr("It might not possible to assign a value to \"%1\".").arg(QString(WatchList[sel].Expression)));
     }
     updateWatch();
@@ -251,7 +250,7 @@ void WatchView::editWatchSlot()
     QString originalExpr = getCellContent(getInitialSelection(), ColExpr);
     QString currentType = getCellContent(getInitialSelection(), ColType);
     if(SimpleInputBox(this, tr("Enter the expression to watch"), originalExpr, expr, tr("Example: [EAX]")))
-        DbgCmdExecDirect(QString("SetWatchExpression ").append(getSelectedId()).append(",").append(expr).append(",").append(currentType));
+        DbgCmdExecDirect(QString("SetWatchExpression %1, \"%2\", %3").arg(getSelectedId(), DbgCmdEscape(expr), currentType));
     updateWatch();
 }
 

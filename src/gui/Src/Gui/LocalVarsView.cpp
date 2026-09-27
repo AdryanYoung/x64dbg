@@ -41,11 +41,11 @@ void LocalVarsView::setupContextMenu()
     {
         return DbgIsDebugging();
     });
-    mMenu->addAction(makeAction(DIcon("dump.png"), tr("&Follow in Dump"), SLOT(followDumpSlot())), [this](QMenu*)
+    mMenu->addAction(makeAction(DIcon("dump"), tr("&Follow in Dump"), SLOT(followDumpSlot())), [this](QMenu*)
     {
         return getCellContent(getInitialSelection(), 2) != "???";
     });
-    mMenu->addAction(makeAction(DIcon("dump.png"), ArchValue(tr("Follow DWORD in Dump"), tr("Follow QWORD in Dump")), SLOT(followWordInDumpSlot())), [this](QMenu*)
+    mMenu->addAction(makeAction(DIcon("dump"), ArchValue(tr("Follow DWORD in Dump"), tr("Follow QWORD in Dump")), SLOT(followWordInDumpSlot())), [this](QMenu*)
     {
         duint start;
         if(getAddress(getCellContent(getInitialSelection(), 1), start))
@@ -56,7 +56,7 @@ void LocalVarsView::setupContextMenu()
         else
             return false;
     });
-    mMenu->addAction(makeShortcutAction(DIcon("stack.png"), tr("Follow in Stack"), SLOT(followStackSlot()), "ActionFollowStack"), [this](QMenu*)
+    mMenu->addAction(makeShortcutAction(DIcon("stack"), tr("Follow in Stack"), SLOT(followStackSlot()), "ActionFollowStack"), [this](QMenu*)
     {
         duint start;
         if(getAddress(getCellContent(getInitialSelection(), 1), start))
@@ -64,7 +64,7 @@ void LocalVarsView::setupContextMenu()
         else
             return false;
     });
-    mMenu->addAction(makeAction(DIcon("stack.png"), ArchValue(tr("Follow DWORD in Stack"), tr("Follow QWORD in Stack")), SLOT(followWordInStackSlot())), [this](QMenu*)
+    mMenu->addAction(makeAction(DIcon("stack"), ArchValue(tr("Follow DWORD in Stack"), tr("Follow QWORD in Stack")), SLOT(followWordInStackSlot())), [this](QMenu*)
     {
         duint start;
         if(getAddress(getCellContent(getInitialSelection(), 1), start))
@@ -75,11 +75,11 @@ void LocalVarsView::setupContextMenu()
         else
             return false;
     });
-    mMenu->addAction(makeShortcutAction(DIcon("memmap_find_address_page.png"), tr("Follow in Memory Map"), SLOT(followMemMapSlot()), "ActionFollowMemMap"), [this](QMenu*)
+    mMenu->addAction(makeShortcutAction(DIcon("memmap_find_address_page"), tr("Follow in Memory Map"), SLOT(followMemMapSlot()), "ActionFollowMemMap"), [this](QMenu*)
     {
         return getCellContent(getInitialSelection(), 2) != "???";
     });
-    mMenu->addAction(makeShortcutAction(DIcon("modify.png"), tr("&Modify Value"), SLOT(editSlot()), "ActionModifyValue"), [this](QMenu*)
+    mMenu->addAction(makeShortcutAction(DIcon("modify"), tr("&Modify Value"), SLOT(editSlot()), "ActionModifyValue"), [this](QMenu*)
     {
         return getCellContent(getInitialSelection(), 2) != "???";
     });
@@ -87,7 +87,7 @@ void LocalVarsView::setupContextMenu()
     mMenu->addAction(makeAction(tr("&Rename"), SLOT(renameSlot())));
     MenuBuilder* copyMenu = new MenuBuilder(this);
     setupCopyMenu(copyMenu);
-    mMenu->addMenu(makeMenu(DIcon("copy.png"), tr("&Copy")), copyMenu);
+    mMenu->addMenu(makeMenu(DIcon("copy"), tr("&Copy")), copyMenu);
     mMenu->addSeparator();
     MenuBuilder* mBaseRegisters = new MenuBuilder(this);
 #ifdef _WIN64
@@ -121,9 +121,9 @@ void LocalVarsView::mousePressEvent(QMouseEvent* event)
 
 void LocalVarsView::contextMenuSlot(const QPoint & pos)
 {
-    QMenu wMenu(this);
-    mMenu->build(&wMenu);
-    wMenu.exec(mapToGlobal(pos));
+    QMenu menu(this);
+    mMenu->build(&menu);
+    menu.exec(mapToGlobal(pos));
 }
 
 void LocalVarsView::baseChangedSlot()
@@ -135,7 +135,7 @@ void LocalVarsView::baseChangedSlot()
 void LocalVarsView::configUpdatedSlot()
 {
     currentFunc = 0;
-    HexPrefixValues = Config()->getBool("Disassembler", "0xPrefixValues");
+    ValueNotation = (DisasmValueNotationType)Config()->getUint("Disassembler", "0xPrefixValues");
     MemorySpaces = Config()->getBool("Disassembler", "MemorySpaces");
 }
 
@@ -148,8 +148,8 @@ void LocalVarsView::updateSlot()
         reloadData();
         return;
     }
-    REGDUMP z;
-    DbgGetRegDumpEx(&z, sizeof(REGDUMP));
+    REGDUMP_AVX512 z;
+    DbgGetRegDumpEx(&z, sizeof(z));
     duint start, end;
 
     if(DbgFunctionGet(z.regcontext.cip, &start, &end))
@@ -228,25 +228,30 @@ void LocalVarsView::updateSlot()
                     QString expr;
                     QString name;
                     if(j < 0)
-                    {
                         expr = QString("%1").arg(-j, 0, 16);
-                        if(HexPrefixValues)
-                            expr = "0x" + expr;
-                        if(!MemorySpaces)
-                            expr = "-" + expr;
-                        else
-                            expr = " - " + expr;
-                    }
                     else
-                    {
                         expr = QString("%1").arg(j, 0, 16);
-                        if(HexPrefixValues)
-                            expr = "0x" + expr;
-                        if(!MemorySpaces)
-                            expr = "+" + expr;
+
+                    switch(ValueNotation)
+                    {
+                    case DisasmValueNotationC:
+                        expr = "0x" + expr;
+                        break;
+                    case DisasmValueNotationMASM:
+                        if((expr[0] >= 'A' && expr[0] <= 'F') || (expr[0] >= 'a' && expr[0] <= 'f'))
+                            expr = "0" + expr + "h";
                         else
-                            expr = " + " + expr;
+                            expr = expr + "h";
+                        break;
+                    default:
+                        break;
                     }
+
+                    if(!MemorySpaces)
+                        expr = ((j < 0) ? "-" : "+") + expr;
+                    else
+                        expr = ((j < 0) ? " - " : " + ") + expr;
+
                     expr = QString("[%1%2]").arg(baseRegisters[i]->text()).arg(expr);
                     if(i == 4) //CBP
                     {
@@ -270,7 +275,7 @@ void LocalVarsView::updateSlot()
             } // Analyze finish
             this->currentFunc = start;
         }
-        for(dsint i = 0; i < getRowCount(); i++)
+        for(duint i = 0; i < getRowCount(); i++)
         {
             duint val = 0;
             QByteArray buf = getCellContent(i, 1).toUtf8();

@@ -1,12 +1,11 @@
-#ifndef _SYMBOLSOURCEBASE_H_
-#define _SYMBOLSOURCEBASE_H_
+#pragma once
 
 #include "_global.h"
 
-#include <stdint.h>
 #include <vector>
-#include <functional>
 #include <map>
+#include <string>
+#include <functional>
 #include <algorithm>
 
 //http://en.cppreference.com/w/cpp/algorithm/lower_bound
@@ -24,6 +23,29 @@ static ForwardIt binary_find(ForwardIt first, ForwardIt last, const T & value, C
 struct SymbolInfoGui
 {
     virtual void convertToGuiSymbol(duint base, SYMBOLINFO* info) const = 0;
+
+    void copyToGuiSymbol(duint modbase, SYMBOLINFO* info) const
+    {
+        convertToGuiSymbol(modbase, info);
+
+        if(!info->freeDecorated)
+        {
+            const char* name = info->decoratedSymbol;
+            size_t len = strlen(name);
+            info->decoratedSymbol = (char*)BridgeAlloc(len + 1);
+            memcpy(info->decoratedSymbol, name, len + 1);
+            info->freeDecorated = true;
+        }
+
+        if(!info->freeUndecorated)
+        {
+            const char* name = info->undecoratedSymbol;
+            size_t len = strlen(name);
+            info->undecoratedSymbol = (char*)BridgeAlloc(len + 1);
+            memcpy(info->undecoratedSymbol, name, len + 1);
+            info->freeUndecorated = true;
+        }
+    }
 };
 
 struct SymbolInfo : SymbolInfoGui
@@ -34,6 +56,7 @@ struct SymbolInfo : SymbolInfoGui
     String decoratedName;
     String undecoratedName;
     bool publicSymbol = false;
+    bool functionSymbol = false;
 
     void convertToGuiSymbol(duint modbase, SYMBOLINFO* info) const override
     {
@@ -57,8 +80,8 @@ struct LineInfo
 
 struct NameIndex
 {
-    const char* name;
-    size_t index;
+    const char* name = nullptr;
+    size_t index = -1;
 
     bool operator<(const NameIndex & b) const
     {
@@ -145,7 +168,7 @@ public:
     }
 
     // only call if isOpen && !isLoading
-    virtual void enumSymbols(const CbEnumSymbol & cbEnum)
+    virtual void enumSymbols(const CbEnumSymbol & cbEnum, duint beginRva = 0, duint endRva = -1)
     {
         // Stub
     }
@@ -181,5 +204,3 @@ public:
 };
 
 static SymbolSourceBase EmptySymbolSource;
-
-#endif // _SYMBOLSOURCEBASE_H_
